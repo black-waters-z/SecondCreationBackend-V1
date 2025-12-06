@@ -1,0 +1,65 @@
+# 忽略所有隐藏文件和目录
+.*
+!/.dockerignore
+
+# 忽略 Git
+.git/
+.gitignore
+
+# 忽略 Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+.eggs/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# 忽略 Node.js（如果有前端）
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+dist/
+build/
+
+# 忽略日志和数据库文件
+*.log
+logs/
+*.sqlite3
+*.db
+data/
+mysql_data/
+**/mysql.sock
+**/*.sock
+
+# 忽略 IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 忽略临时文件
+tmp/
+temp/
+.cache/
+
+# 忽略文档
+README.md
+*.md
+
+# 忽略上传文件等
+uploads/
+media/
+staticfiles/
+
+# 忽略 Docker 相关（避免递归）
+Dockerfile
+docker-compose.yml
+.docker/

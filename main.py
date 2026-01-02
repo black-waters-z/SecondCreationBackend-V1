@@ -57,19 +57,9 @@ async def health_check():
 
 
 app.include_router(user, tags=["用户管理接口"])
-app.include_router(login, tags=["登录接口"])
-app.include_router(email, tags=["邮件发送服务"])
-app.include_router(active, tags=["激活账号"])
-app.include_router(article, tags=["文章管理"])
-app.include_router(favorites, tags=["收藏夹"])
-app.include_router(like, tags=["点赞接口"])
-app.include_router(first_comment, tags=["评论接口"])
 app.include_router(file, tags=["文件上传"])
-app.include_router(ws, tags=["私信ws接口"])
-app.include_router(follow, tags=["关注接口"])
-app.include_router(second_comment, tags=["二级评论"])
-app.include_router(draft, tags=["草稿箱"])
-app.include_router(test, tags=["测试"])
+app.include_router(article, tags=["文章管理接口"])
+app.include_router(role_tag, tags=["角色标签接口"])
 
 if __name__ == '__main__':
     # 宿舍

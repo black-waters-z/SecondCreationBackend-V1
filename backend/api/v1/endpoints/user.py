@@ -1,119 +1,122 @@
-"""
-开始实现jwt令牌
-"""
+from datetime import timedelta
+from typing import List, Optional
 
-from fastapi import APIRouter
-from backend.schemas import UserIn_Pydantic
-from backend.schemas import User_Pydantic
+from fastapi import APIRouter, HTTPException, Query, status
+from pydantic import BaseModel
+from tortoise.contrib.pydantic import pydantic_model_creator
+from tortoise.exceptions import DoesNotExist
+from tortoise.expressions import Q
+
+from backend.config import ACCESS_TOKEN_EXPIRE_MINUTES
+from backend.core import rt
+from backend.controller import user_controller
 from backend.models import User
-from fastapi import HTTPException, status
-from starlette.responses import JSONResponse
-from backend.security import get_password_hash, verify_password
-from fastapi import APIRouter, Depends
-from backend.security.password_security import get_current_user
+from backend.schemas import UserCreate, UserUpdate
+from backend.security.password_security import create_access_token, verify_password
 
-user = APIRouter(dependencies=[Depends(get_current_user)])
+user = APIRouter(prefix="/users", tags=["用户管理接口"])
 
-
-@user.get("/user")
-async def get_user(user: dict = Depends(get_current_user)):
-    result = await User.get(name=user.get("name"))
-    user_data = await User_Pydantic.from_tortoise_orm(result)
-    return user_data.dict(include={"id", "name", "avatar"})
+UserOut = pydantic_model_creator(User, name="UserOut", exclude=("password_hash",))
 
 
+class UserListResponse(BaseModel):
+    total: int
+    items: List[UserOut]
 
 
-@user.put("/user/name")
-async def put_name(name: str, user: dict = Depends(get_current_user)):
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class LoginResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    expires_in: int
+
+
+@user.post("/", response_model=UserOut, status_code=status.HTTP_201_CREATED)
+async def create_user(user_in: UserCreate):
+    created = await user_controller.create_item(user_in)
+    return await UserOut.from_tortoise_orm(created)
+
+
+@user.get("/", response_model=UserListResponse)
+async def list_users(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    keyword: Optional[str] = None,
+):
+    search = Q()
+    if keyword:
+        search = Q(username__icontains=keyword) | Q(email__icontains=keyword)
+    total, records = await user_controller.list_items(
+        page=page, page_size=page_size, search=search, order=["-created_at"]
+    )
+    items = [await UserOut.from_tortoise_orm(obj) for obj in records]
+    return UserListResponse(total=total, items=items)
+
+
+@user.post("/login", response_model=LoginResponse)
+async def login(credentials: LoginRequest):
+    user_record = await User.filter(username=credentials.username).first()
+    if not user_record:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="用户名或密码错误",
+        )
+    if not user_record.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="用户已被禁用",
+        )
+    if not verify_password(credentials.password, user_record.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="用户名或密码错误",
+        )
+
+    expires_delta = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        data={"sub": user_record.username, "uid": user_record.id},
+        expires_delta=expires_delta,
+    )
+    ttl_seconds = int(expires_delta.total_seconds())
+    redis_key = f"user:token:{user_record.id}"
     try:
-        exist = await User.filter(name=name).exists()
-        if exist:
-            return {"msg": "用户名重复"}
+        rt.setex(redis_key, ttl_seconds, access_token)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="令牌缓存失败",
+        ) from exc
 
-        user = await User.get(id=user.get("id"))
-        user.name = name
-        await user.save()
-        return {"msg": "用户名修改成功"}
-    except Exception as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="用户名修改失败")
+    return LoginResponse(access_token=access_token, expires_in=ttl_seconds)
 
 
-@user.put("/password")
-async def update_user(fast_password: str, next_password: str, user: dict = Depends(get_current_user)):
+@user.get("/{user_id}", response_model=UserOut)
+async def get_user(user_id: int):
     try:
-        result = await User.filter(id=user.get("id")).first()
-        password_hash = result.password_hash
-        if verify_password(fast_password, password_hash):
-            result.password_hash = get_password_hash(next_password)
-            await result.save()
-            return JSONResponse(status_code=status.HTTP_200_OK, content={
-                "message": "修改密码成功",
-                "user_name": result.name,
-                "status": 200,
-            })
-        else:
-            return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={
-                "message": "输入的原始密码错误",
-            })
-    except Exception:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="用户名或密码错误")
+        record = await user_controller.get_item(user_id)
+    except DoesNotExist:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="用户不存在")
+    return await UserOut.from_tortoise_orm(record)
 
 
-@user.put("/user/email")
-async def change_email(email: str, user: dict = Depends(get_current_user)):
-    result = await User.get(id=user.get("id"))
-    result.email = email
-    await result.save()
-    return {
-        "status": 200,
-        "msg": "修改密码成功"
-    }
-
-
-@user.delete("/user")
-async def delete_user(name: str):
+@user.put("/{user_id}", response_model=UserOut)
+async def update_user(user_id: int, user_in: UserUpdate):
+    if not user_in.model_dump(exclude_unset=True, exclude_none=True):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="请至少提供一个需要更新的字段")
     try:
-        user = await User.get(name=name)
-        await user.delete()
-        return JSONResponse(status_code=status.HTTP_200_OK, content={
-            "message": "注销成功"
-        })
-    except Exception:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="注销的用户不存在")
+        updated = await user_controller.update_item(user_id, user_in)
+    except DoesNotExist:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="用户不存在")
+    return await UserOut.from_tortoise_orm(updated)
 
 
-@user.get("/user/parse_token_to_user")
-def parse_token_to_user(verify_token: dict = Depends(get_current_user)):
-    return {
-        "message": "欢迎！",
-        "user_info": verify_token  # 包含用户信息的字典
-    }
-
-
-@user.get("/user/poster_infos")
-async def get_poster_infos(name: str):
+@user.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_user(user_id: int):
     try:
-        result = await User.get(name=name).values("name", "avatar")
-        return result
-    except Exception:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="查看用户信息失败")
-
-
-@user.get("/user/avatar")
-async def get_avatar(name: str):
-    try:
-        result = await User.get(name=name).values("avatar")
-        return result
-    except Exception:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="获取头像失败！")
-
-
-@user.put("/user/avatar")
-async def put_avatar(avatar: str, user: dict = Depends(get_current_user)):
-    try:
-        result = await User.get(id=user.get("id"))
-        result.avatar = avatar
-        await result.save()
-    except Exception:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="更改头像失败！")
+        await user_controller.delete_item(user_id)
+    except DoesNotExist:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="用户不存在")

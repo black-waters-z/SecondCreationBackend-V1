@@ -1,6 +1,6 @@
 import os
 
-from fastapi import APIRouter, UploadFile, HTTPException
+from fastapi import APIRouter, UploadFile, HTTPException, File
 from pydantic import BaseModel
 import base64
 import uuid
@@ -8,6 +8,9 @@ import re
 
 file = APIRouter()
 
+# class FileResponse(BaseModel):
+#
+#
 
 class ImageUploadRequest(BaseModel):
     file: dict = {}
@@ -15,6 +18,44 @@ class ImageUploadRequest(BaseModel):
     message: str = ""
     objectUrl: str = ""
     content: str  # Base64 图片数据
+
+
+@file.post("/upload-image-file")
+async def upload_image_file(image: UploadFile = File(...)):
+    allowed_types = {
+        "image/jpeg": ".jpg",
+        "image/png": ".png",
+        "image/gif": ".gif",
+        "image/webp": ".webp",
+    }
+
+    if image.content_type not in allowed_types:
+        raise HTTPException(status_code=400, detail="Unsupported image format")
+
+    filename = f"{uuid.uuid4().hex}{allowed_types[image.content_type]}"
+    upload_dir = os.path.join("backend", "static", "upload_IMG")
+    os.makedirs(upload_dir, exist_ok=True)
+    save_path = os.path.join(upload_dir, filename)
+
+    try:
+        contents = await image.read()
+        if not contents:
+            raise HTTPException(status_code=400, detail="Uploaded file is empty")
+
+        with open(save_path, "wb") as buffer:
+            buffer.write(contents)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Server error: {exc}")
+
+    return {
+        "status": "success",
+        "message": "Image uploaded successfully",
+        "objectUrl": f"/static/upload_IMG/{filename}",
+        "filename": filename,
+        "fileSize": len(contents),
+    }
 
 
 @file.post("/upload-image")

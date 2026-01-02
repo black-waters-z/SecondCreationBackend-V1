@@ -3,18 +3,13 @@
 """
 
 # models/__init__.py
-from .user import User
-from .article import Article
-from .comment import Comment
-from .zone import Zone
-from .favorites import Favorites
-from .like import Like
-from .privatemessage import PrivateMessage
-from .secondcomments import SecondComment
-from .drafts import Draft
+from .mysql import *
 # 导出所有模型
-__all__ = ["User", "Article", "Comment","Zone","Favorites","SecondComment","Draft"]
-
+__all__ = [
+    'User', 'UserProfile', 'WorkName', 'RoleTag', 'CrossRoleTag', 'Article',
+    'ArticleTag', 'UserViewHistory', 'UserFavorite', 'UserLike',
+    'Reward', 'ArticleRewardRanking', 'UserInterest', 'ArticleRecommendation'
+]
 """
 数据库迁移命令:
 aerich init -t config.TORTOISE_CONFIG

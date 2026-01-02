@@ -4,13 +4,10 @@ TORTOISE_CONFIG = {
             "engine": "tortoise.backends.mysql",
             "credentials": {
                 "host":"localhost",
-                # "host": "scforum-mysql",  # 使用容器名
                 "port": 3306,             # 容器内端口
                 "user": "root",
                 "password": "161231",
-                # "user": "appuser",
-                # "password": "apppassword",
-                "database": "scforum",
+                "database": "scforum_db",
                 "pool_recycle": 3600,
                 "connect_timeout": 30,
             }

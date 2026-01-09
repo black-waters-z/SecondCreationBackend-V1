@@ -4,14 +4,7 @@ from .user import (
     UserProfileUpdate,
     UserUpdate,
 )
-from .tag import (
-    ArticleTagCreate,
-    ArticleTagUpdate,
-    CrossRoleTagCreate,
-    CrossRoleTagUpdate,
-    RoleTagCreate,
-    RoleTagUpdate,
-)
+from .tag import TagCreate, TagRelationCreate, TagRelationUpdate, TagType, TagUpdate
 from .article import (
     ArticleCreate,
     ArticleRecommendationCreate,
@@ -38,12 +31,11 @@ __all__ = [
     "UserUpdate",
     "UserProfileCreate",
     "UserProfileUpdate",
-    "RoleTagCreate",
-    "RoleTagUpdate",
-    "CrossRoleTagCreate",
-    "CrossRoleTagUpdate",
-    "ArticleTagCreate",
-    "ArticleTagUpdate",
+    "TagCreate",
+    "TagUpdate",
+    "TagType",
+    "TagRelationCreate",
+    "TagRelationUpdate",
     "ArticleCreate",
     "ArticleUpdate",
     "ArticleRewardRankingCreate",

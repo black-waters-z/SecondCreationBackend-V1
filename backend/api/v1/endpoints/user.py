@@ -12,7 +12,7 @@ from backend.core import rt
 from backend.controller import user_controller
 from backend.models import User
 from backend.schemas import UserCreate, UserUpdate
-from backend.security.password_security import create_access_token, verify_password
+from backend.security.password_security import create_access_token, verify_password,get_password_hash
 
 user = APIRouter(prefix="/users", tags=["用户管理接口"])
 
@@ -70,10 +70,11 @@ async def login(credentials: LoginRequest):
             status_code=status.HTTP_403_FORBIDDEN,
             detail="用户已被禁用",
         )
-    if not verify_password(credentials.password, user_record.password_hash):
+    verify = verify_password(credentials.password, user_record.password_hash)
+    if not verify:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="用户名或密码错误",
+            detail=verify,
         )
 
     expires_delta = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)

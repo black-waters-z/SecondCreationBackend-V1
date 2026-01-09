@@ -15,11 +15,6 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 # 哈希加密是不可逆的，所以即使黑客获取了哈希值，他们也无法直接从中恢复出用户的密码。这与对称加密（比如 AES）不同，后者需要保护加密密钥。如果密钥丢失或泄露，数据就会被解密。
 
 def verify_password(plain_password, hashed_password):
-    """
-    :param plain_password:未加密
-    :param hashed_password: 已加密，存储在数据库中
-    :return:
-    """
     return pwd_context.verify(plain_password, hashed_password)
 
 

@@ -1,16 +1,32 @@
-﻿from typing import List
+from typing import List
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
 from tortoise.contrib.pydantic import pydantic_model_creator
 
-from backend.models import Article
 from backend.controller import article_controller
+from backend.models import Article
 from backend.schemas import ArticleCreate, ArticleUpdate
 
 article = APIRouter(prefix="/articles", tags=["文章管理接口"])
 
-ArticleOut = pydantic_model_creator(Article, name="ArticleOut")
+ArticleOut = pydantic_model_creator(
+    Article,
+    name="ArticleOut",
+    include=(
+        "id",
+        "title",
+        "subtitle",
+        "author_id",
+        "content",
+        "image_urls",
+        "status",
+        "published_at",
+        "created_at",
+        "updated_at",
+        "tags",
+    )
+)
 
 
 class ArticleListResponse(BaseModel):
@@ -27,7 +43,13 @@ async def list_articles(page: int):
 
 @article.post("")
 async def create_article(article_in: ArticleCreate):
-    article_obj = await article_controller.create(article_in)
+    try:
+        article_obj = await article_controller.create(article_in)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        )
     return await ArticleOut.from_tortoise_orm(article_obj)
 
 
@@ -39,11 +61,17 @@ async def get_article(article_id: int):
 
 @article.put("/{article_id}")
 async def update_article(article_id: int, article_in: ArticleUpdate):
-    updated_article = await article_controller.update_item(article_id, article_in)
+    try:
+        updated_article = await article_controller.update_item(article_id, article_in)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        )
     return await ArticleOut.from_tortoise_orm(updated_article)
 
 
 @article.delete("/{article_id}")
 async def delete_article(article_id: int):
     await article_controller.delete_item(article_id)
-    return {"status": "success", "message": "文章删除成功"}
+    return {"status": "success", "message": "删除成功"}

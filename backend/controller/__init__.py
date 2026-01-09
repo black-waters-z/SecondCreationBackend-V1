@@ -5,14 +5,7 @@ from .user import (
     user_controller,
     user_profile_controller,
 )
-from .tag import (
-    ArticleTagController,
-    CrossRoleTagController,
-    RoleTagController,
-    article_tag_controller,
-    cross_role_tag_controller,
-    role_tag_controller,
-)
+from .tag import TagController, TagRelationController, tag_controller, tag_relation_controller
 from .article import (
     ArticleController,
     ArticleRecommendationController,
@@ -39,10 +32,9 @@ __all__ = [
     "ArticleController",
     "ArticleRecommendationController",
     "ArticleRewardRankingController",
-    "ArticleTagController",
-    "CrossRoleTagController",
     "RewardController",
-    "RoleTagController",
+    "TagController",
+    "TagRelationController",
     "UserController",
     "UserFavoriteController",
     "UserInterestController",
@@ -52,10 +44,9 @@ __all__ = [
     "article_controller",
     "article_recommendation_controller",
     "article_reward_ranking_controller",
-    "article_tag_controller",
-    "cross_role_tag_controller",
     "reward_controller",
-    "role_tag_controller",
+    "tag_controller",
+    "tag_relation_controller",
     "user_controller",
     "user_favorite_controller",
     "user_interest_controller",

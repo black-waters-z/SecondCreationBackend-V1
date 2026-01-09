@@ -1,6 +1,14 @@
-from tortoise import models, fields
-from tortoise.fields import CASCADE, SET_NULL  # 导入正确的类型
+from enum import Enum
+
+from tortoise import fields
+from tortoise.fields import CASCADE, SET_NULL
 from tortoise.models import Model
+
+
+class TagType(str, Enum):
+    CHARACTER = "character"
+    CROSS = "cross"
+    WORK = "work"
 
 
 class User(Model):
@@ -22,7 +30,7 @@ class User(Model):
 class UserProfile(Model):
     """用户详细资料"""
     id = fields.IntField(pk=True)
-    user = fields.ForeignKeyField('models.User', related_name='profile')
+    user = fields.ForeignKeyField("models.User", related_name="profile")
     first_name = fields.CharField(max_length=50, null=True)
     last_name = fields.CharField(max_length=50, null=True)
     birth_date = fields.DateField(null=True)
@@ -33,84 +41,72 @@ class UserProfile(Model):
         table = "user_profiles"
 
 
-class WorkName(Model):
-    """作品名称"""
+class Tag(Model):
+    """通用标签"""
     id = fields.IntField(pk=True)
-    workName = fields.CharField(max_length=200, unique=True)
+    name = fields.CharField(max_length=100)
+    type = fields.CharEnumField(TagType, max_length=20)
     description = fields.TextField(null=True)
     created_at = fields.DatetimeField(auto_now_add=True)
 
     class Meta:
-        table = "work_names"
+        table = "tags"
+        unique_together = ("name", "type")
 
 
-class RoleTag(Model):
-    """角色标签"""
+class TagRelation(Model):
+    """作品标签与角色标签的关联"""
     id = fields.IntField(pk=True)
-    name = fields.CharField(max_length=50, unique=True)
-    description = fields.TextField(null=True)
-    color = fields.CharField(max_length=7, default="#000000")  # HEX颜色值
-    work_name = fields.ForeignKeyField('models.WorkName', related_name='role_tags', null=True)
+    work_tag = fields.ForeignKeyField(
+        "models.Tag",
+        related_name="character_relations",
+        on_delete=CASCADE,
+    )
+    character_tag = fields.ForeignKeyField(
+        "models.Tag",
+        related_name="work_relations",
+        on_delete=CASCADE,
+    )
     created_at = fields.DatetimeField(auto_now_add=True)
 
     class Meta:
-        table = "role_tags"
-
-
-class CrossRoleTag(Model):
-    """交叉角色标签 - 两两角色的组合"""
-    id = fields.IntField(pk=True)
-    role_a = fields.ForeignKeyField('models.RoleTag', related_name='cross_role_a')
-    role_b = fields.ForeignKeyField('models.RoleTag', related_name='cross_role_b')
-    name = fields.CharField(max_length=100, unique=True)  # 组合名称
-    description = fields.TextField(null=True)
-    weight = fields.FloatField(default=1.0)  # 权重，用于推荐算法
-
-    class Meta:
-        table = "cross_role_tags"
-        unique_together = ("role_a", "role_b")
+        table = "tag_relations"
+        unique_together = ("work_tag", "character_tag")
 
 
 class Article(Model):
     """文章内容"""
-    id = fields.IntField(pk=True)
+    id = fields.IntField(pk=True, auto_increment=True)
     title = fields.CharField(max_length=200)
-    subtitle = fields.CharField(max_length=500, null=True)  # 小字
-    author = fields.ForeignKeyField('models.User', related_name='articles')
+    subtitle = fields.CharField(max_length=500, null=True)
+    author = fields.ForeignKeyField("models.User", related_name="articles")
     content = fields.TextField()
-    image_url = fields.TextField(null=True)  # 文章图片地址
-    tags = fields.ManyToManyField('models.CrossRoleTag', related_name='articles')
+    image_urls = fields.JSONField(null=True)
+
     view_count = fields.IntField(default=0)
     like_count = fields.IntField(default=0)
     favorite_count = fields.IntField(default=0)
     reward_amount = fields.DecimalField(max_digits=15, decimal_places=2, default=0)
-    status = fields.CharField(max_length=20, default="published")  # published, draft, deleted
+    status = fields.CharField(max_length=20, default="published")
     created_at = fields.DatetimeField(auto_now_add=True)
     updated_at = fields.DatetimeField(auto_now=True)
     published_at = fields.DatetimeField(null=True)
+    tags = fields.ManyToManyField(
+        "models.Tag",
+        related_name="articles",
+    )
 
     class Meta:
         table = "articles"
 
 
-class ArticleTag(Model):
-    """文章与交叉标签关联"""
-    id = fields.IntField(pk=True)
-    article = fields.ForeignKeyField('models.Article')
-    tag = fields.ForeignKeyField('models.CrossRoleTag')
-
-    class Meta:
-        table = "article_tags"
-        unique_together = ("article", "tag")
-
-
 class UserViewHistory(Model):
     """用户浏览记录"""
     id = fields.IntField(pk=True)
-    user = fields.ForeignKeyField('models.User', related_name='view_history')
-    article = fields.ForeignKeyField('models.Article', related_name='views')
+    user = fields.ForeignKeyField("models.User", related_name="view_history")
+    article = fields.ForeignKeyField("models.Article", related_name="views")
     viewed_at = fields.DatetimeField(auto_now_add=True)
-    duration = fields.IntField(default=0)  # 浏览时长(秒)
+    duration = fields.IntField(default=0)
 
     class Meta:
         table = "user_view_histories"
@@ -119,8 +115,8 @@ class UserViewHistory(Model):
 class UserFavorite(Model):
     """用户收藏"""
     id = fields.IntField(pk=True)
-    user = fields.ForeignKeyField('models.User', related_name='favorites')
-    article = fields.ForeignKeyField('models.Article', related_name='favorited_by')
+    user = fields.ForeignKeyField("models.User", related_name="favorites")
+    article = fields.ForeignKeyField("models.Article", related_name="favorited_by")
     favorited_at = fields.DatetimeField(auto_now_add=True)
 
     class Meta:
@@ -131,8 +127,8 @@ class UserFavorite(Model):
 class UserLike(Model):
     """用户点赞"""
     id = fields.IntField(pk=True)
-    user = fields.ForeignKeyField('models.User', related_name='likes')
-    article = fields.ForeignKeyField('models.Article', related_name='liked_by')
+    user = fields.ForeignKeyField("models.User", related_name="likes")
+    article = fields.ForeignKeyField("models.Article", related_name="liked_by")
     liked_at = fields.DatetimeField(auto_now_add=True)
 
     class Meta:
@@ -143,22 +139,24 @@ class UserLike(Model):
 class Reward(Model):
     """打赏记录"""
     id = fields.IntField(pk=True)
-    user = fields.ForeignKeyField('models.User', related_name='rewards_given')
-    article = fields.ForeignKeyField('models.Article', related_name='rewards_received')
+    user = fields.ForeignKeyField("models.User", related_name="rewards_given")
+    article = fields.ForeignKeyField("models.Article", related_name="rewards_received")
     amount = fields.DecimalField(max_digits=15, decimal_places=2)
-    message = fields.TextField(null=True)  # 打赏留言
+    message = fields.TextField(null=True)
     rewarded_at = fields.DatetimeField(auto_now_add=True)
-    status = fields.CharField(max_length=20, default="completed")  # completed, pending, failed
+    status = fields.CharField(max_length=20, default="completed")
 
     class Meta:
         table = "rewards"
 
 
 class ArticleRewardRanking(Model):
-    """文章打赏者排名"""
+    """文章打赏者排行"""
     id = fields.IntField(pk=True)
-    article = fields.ForeignKeyField('models.Article', related_name='reward_rankings')
-    user = fields.ForeignKeyField('models.User')
+    article = fields.ForeignKeyField(
+        "models.Article", related_name="reward_rankings"
+    )
+    user = fields.ForeignKeyField("models.User")
     total_amount = fields.DecimalField(max_digits=15, decimal_places=2, default=0)
     reward_count = fields.IntField(default=0)
     last_rewarded_at = fields.DatetimeField()
@@ -171,9 +169,9 @@ class ArticleRewardRanking(Model):
 class UserInterest(Model):
     """用户兴趣偏好"""
     id = fields.IntField(pk=True)
-    user = fields.ForeignKeyField('models.User', related_name='interests')
-    tag = fields.ForeignKeyField('models.CrossRoleTag')
-    interest_score = fields.FloatField(default=0.0)  # 兴趣分数
+    user = fields.ForeignKeyField("models.User", related_name="interests")
+    tag = fields.ForeignKeyField("models.Tag")
+    interest_score = fields.FloatField(default=0.0)
     updated_at = fields.DatetimeField(auto_now=True)
 
     class Meta:
@@ -184,30 +182,38 @@ class UserInterest(Model):
 class ArticleRecommendation(Model):
     """文章推荐记录"""
     id = fields.IntField(pk=True)
-    user = fields.ForeignKeyField('models.User', related_name='recommendations')
-    article = fields.ForeignKeyField('models.Article')
-    score = fields.FloatField(default=0.0)  # 推荐分数
+    user = fields.ForeignKeyField("models.User", related_name="recommendations")
+    article = fields.ForeignKeyField("models.Article")
+    score = fields.FloatField(default=0.0)
     recommended_at = fields.DatetimeField(auto_now_add=True)
-    is_clicked = fields.BooleanField(default=False)  # 是否点击
+    is_clicked = fields.BooleanField(default=False)
     clicked_at = fields.DatetimeField(null=True)
 
     class Meta:
         table = "article_recommendations"
 
 
-# 在 backend/models/mysql.py 中添加以下模型定义
 class ArticleComment(Model):
     """文章评论（支持多级评论）"""
     id = fields.IntField(pk=True)
-    article = fields.ForeignKeyField('models.Article', related_name='comments', on_delete=CASCADE)
-    user = fields.ForeignKeyField('models.User', related_name='comments', on_delete=SET_NULL, null=True)
-    parent = fields.ForeignKeyField('models.ArticleComment', related_name='replies', on_delete=SET_NULL, null=True)
+    article = fields.ForeignKeyField(
+        "models.Article", related_name="comments", on_delete=CASCADE
+    )
+    user = fields.ForeignKeyField(
+        "models.User", related_name="comments", on_delete=SET_NULL, null=True
+    )
+    parent = fields.ForeignKeyField(
+        "models.ArticleComment",
+        related_name="replies",
+        on_delete=SET_NULL,
+        null=True,
+    )
     content = fields.TextField()
     like_count = fields.IntField(default=0)
     reply_count = fields.IntField(default=0)
     created_at = fields.DatetimeField(auto_now_add=True)
     updated_at = fields.DatetimeField(auto_now=True)
-    is_deleted = fields.BooleanField(default=False)  # 软删除标记
+    is_deleted = fields.BooleanField(default=False)
     deleted_at = fields.DatetimeField(null=True)
 
     class Meta:

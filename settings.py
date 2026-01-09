@@ -7,7 +7,7 @@ TORTOISE_CONFIG = {
                 "port": 3306,             # 容器内端口
                 "user": "root",
                 "password": "161231",
-                "database": "scforum_db",
+                "database": "scforum",
                 "pool_recycle": 3600,
                 "connect_timeout": 30,
             }

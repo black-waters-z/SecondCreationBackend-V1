@@ -4,11 +4,13 @@
 
 # models/__init__.py
 from .mysql import *
+from .test import *
 # 导出所有模型
 __all__ = [
-    'User', 'UserProfile', 'WorkName', 'RoleTag', 'CrossRoleTag', 'Article',
-    'ArticleTag', 'UserViewHistory', 'UserFavorite', 'UserLike',
-    'Reward', 'ArticleRewardRanking', 'UserInterest', 'ArticleRecommendation'
+    'User', 'UserProfile', 'Tag', 'TagRelation', 'Article',
+    'UserViewHistory', 'UserFavorite', 'UserLike', 'Reward',
+    'ArticleRewardRanking', 'UserInterest', 'ArticleRecommendation',
+    'ArticleComment',
 ]
 """
 数据库迁移命令:

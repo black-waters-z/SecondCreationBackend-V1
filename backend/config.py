@@ -19,7 +19,7 @@ TORTOISE_CONFIG={
         },
         'apps':{
             'models':{
-                'models':['models',"models.favorites","models.like","models.secondcomments",'models.drafts','aerich.models'],
+                'models':['models','aerich.models'],
                 'default_connection':'default'
             }
         },

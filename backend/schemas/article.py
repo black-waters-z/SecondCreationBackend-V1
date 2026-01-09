@@ -2,7 +2,20 @@ from datetime import datetime
 from decimal import Decimal
 from typing import List, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
+
+
+def _validate_image_urls(value: Optional[List[str]]) -> Optional[List[str]]:
+    if value is None:
+        return None
+    if len(value) > 9:
+        raise ValueError("图片URL最多只能提供9个")
+    cleaned = []
+    for url in value:
+        if not url:
+            raise ValueError("图片URL不能为空")
+        cleaned.append(url)
+    return cleaned
 
 
 class ArticleCreate(BaseModel):
@@ -10,10 +23,15 @@ class ArticleCreate(BaseModel):
     author_id: int
     content: str
     subtitle: Optional[str] = None
-    image_url: Optional[str] = None
+    image_urls: Optional[List[str]] = None
     status: Optional[str] = "published"
     published_at: Optional[datetime] = None
     tag_ids: Optional[List[int]] = None
+
+    @field_validator("image_urls")
+    @classmethod
+    def validate_image_urls(cls, value: Optional[List[str]]) -> Optional[List[str]]:
+        return _validate_image_urls(value)
 
 
 class ArticleShow(BaseModel):
@@ -22,10 +40,15 @@ class ArticleShow(BaseModel):
     author_id: int
     content: str
     subtitle: Optional[str] = None
-    image_url: Optional[str] = None
+    image_urls: Optional[List[str]] = None
     status: Optional[str] = "published"
     published_at: Optional[datetime] = None
     tag_ids: Optional[List[int]] = None
+
+    @field_validator("image_urls")
+    @classmethod
+    def validate_image_urls(cls, value: Optional[List[str]]) -> Optional[List[str]]:
+        return _validate_image_urls(value)
 
 
 class ArticleUpdate(BaseModel):
@@ -33,7 +56,7 @@ class ArticleUpdate(BaseModel):
     author_id: Optional[int] = None
     content: Optional[str] = None
     subtitle: Optional[str] = None
-    image_url: Optional[str] = None
+    image_urls: Optional[List[str]] = None
     status: Optional[str] = None
     reward_amount: Optional[Decimal] = None
     published_at: Optional[datetime] = None
@@ -41,6 +64,11 @@ class ArticleUpdate(BaseModel):
     like_count: Optional[int] = None
     favorite_count: Optional[int] = None
     tag_ids: Optional[List[int]] = None
+
+    @field_validator("image_urls")
+    @classmethod
+    def validate_image_urls(cls, value: Optional[List[str]]) -> Optional[List[str]]:
+        return _validate_image_urls(value)
 
 
 class ArticleRewardRankingCreate(BaseModel):

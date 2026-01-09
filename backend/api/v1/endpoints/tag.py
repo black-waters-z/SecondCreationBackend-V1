@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel
@@ -6,83 +6,145 @@ from tortoise.contrib.pydantic import pydantic_model_creator
 from tortoise.exceptions import DoesNotExist
 from tortoise.expressions import Q
 
-from backend.models import RoleTag, WorkName
-from backend.controller import role_tag_controller
-from backend.schemas import RoleTagCreate, RoleTagUpdate
+from backend.controller import tag_controller, tag_relation_controller
+from backend.models import Tag, TagRelation
+from backend.schemas import (
+    TagCreate,
+    TagRelationCreate,
+    TagRelationUpdate,
+    TagType,
+    TagUpdate,
+)
 
-role_tag = APIRouter(prefix="/tag/roletag", tags=["RoleTag"])
+tag = APIRouter(prefix="/tags")
+tag_relation = APIRouter(prefix="/tag-relations")
+TagOut = pydantic_model_creator(Tag, name="TagOut")
+TagRelationOut = pydantic_model_creator(TagRelation, name="TagRelationOut")
 
-RoleTagOut = pydantic_model_creator(RoleTag, name="RoleTagOut")
 
-
-class RoleTagListResponse(BaseModel):
+class TagListResponse(BaseModel):
     total: int
-    items: List[RoleTagOut]
+    items: List[TagOut]
 
 
-@role_tag.get("/", response_model=RoleTagListResponse)
-async def list_role_tags(
+class TagRelationListResponse(BaseModel):
+    total: int
+    items: List[TagRelationOut]
+
+
+@tag.get("/", response_model=TagListResponse)
+async def list_tags(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
-    key_word: str = None
+    tag_type: Optional[TagType] = Query(default=None),
+    keyword: Optional[str] = Query(default=None),
 ):
     search = Q()
-    if key_word:
-        search = Q(name__icontains=key_word)
-    total, records = await role_tag_controller.list_items(
-        page=page, page_size=page_size,search=search, order=["-created_at"]
+    if tag_type:
+        search &= Q(type=tag_type)
+    if keyword:
+        search &= Q(name__icontains=keyword)
+
+    total, records = await tag_controller.list_items(
+        page=page, page_size=page_size, search=search, order=["-created_at"]
     )
-    items = [await RoleTagOut.from_tortoise_orm(obj) for obj in records]
-    return RoleTagListResponse(total=total, items=items)
+    items = [await TagOut.from_tortoise_orm(obj) for obj in records]
+    return TagListResponse(total=total, items=items)
 
 
-@role_tag.post("/", response_model=RoleTagOut, status_code=status.HTTP_201_CREATED)
-async def create_role_tag(tag_in: RoleTagCreate):
-    work_title = tag_in.work_name_title.strip()
-    if not work_title:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Work name is required")
-    work_name, _ = await WorkName.get_or_create(workName=work_title)
-    payload = tag_in.model_dump(exclude={"work_name_title"})
-    payload["work_name_id"] = work_name.id
-    created = await role_tag_controller.create_item(payload)
-    return await RoleTagOut.from_tortoise_orm(created)
+@tag.post("/", response_model=TagOut, status_code=status.HTTP_201_CREATED)
+async def create_tag(tag_in: TagCreate):
+    created = await tag_controller.create_item(tag_in)
+    return await TagOut.from_tortoise_orm(created)
 
 
-@role_tag.get("/{tag_id}", response_model=RoleTagOut)
-async def get_role_tag(tag_id: int):
+@tag.get("/{tag_id}", response_model=TagOut)
+async def get_tag(tag_id: int):
     try:
-        record = await role_tag_controller.get_item(tag_id)
+        record = await tag_controller.get_item(tag_id)
     except DoesNotExist:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Role tag not found")
-    return await RoleTagOut.from_tortoise_orm(record)
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tag not found")
+    return await TagOut.from_tortoise_orm(record)
 
 
-@role_tag.put("/{tag_id}", response_model=RoleTagOut)
-async def update_role_tag(tag_id: int, tag_in: RoleTagUpdate):
-    update_data = tag_in.model_dump(exclude_unset=True, exclude_none=True)
-    if not update_data:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="Provide at least one field to update"
-        )
-    work_title = update_data.pop("work_name_title", None)
-    if work_title is not None:
-        stripped = work_title.strip()
-        if not stripped:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST, detail="Work name cannot be empty"
-            )
-        work_name, _ = await WorkName.get_or_create(title=stripped)
-        update_data["work_name_id"] = work_name.id
+@tag.put("/{tag_id}", response_model=TagOut)
+async def update_tag(tag_id: int, tag_in: TagUpdate):
     try:
-        updated = await role_tag_controller.update_item(tag_id, update_data)
+        updated = await tag_controller.update_item(tag_id, tag_in)
     except DoesNotExist:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Role tag not found")
-    return await RoleTagOut.from_tortoise_orm(updated)
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tag not found")
+    return await TagOut.from_tortoise_orm(updated)
 
 
-@role_tag.delete("/{tag_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_role_tag(tag_id: int):
+@tag.delete("/{tag_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_tag(tag_id: int):
     try:
-        await role_tag_controller.delete_item(tag_id)
+        await tag_controller.delete_item(tag_id)
     except DoesNotExist:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Role tag not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tag not found")
+
+
+@tag_relation.get("/", response_model=TagRelationListResponse)
+async def list_tag_relations(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    work_tag_id: Optional[int] = Query(default=None),
+    character_tag_id: Optional[int] = Query(default=None),
+):
+    search = Q()
+    if work_tag_id:
+        search &= Q(work_tag_id=work_tag_id)
+    if character_tag_id:
+        search &= Q(character_tag_id=character_tag_id)
+
+    total, records = await tag_relation_controller.list_items(
+        page=page, page_size=page_size, search=search, order=["-created_at"]
+    )
+    items = [await TagRelationOut.from_tortoise_orm(obj) for obj in records]
+    return TagRelationListResponse(total=total, items=items)
+
+
+@tag_relation.post("/", response_model=TagRelationOut, status_code=status.HTTP_201_CREATED)
+async def create_tag_relation(relation_in: TagRelationCreate):
+    try:
+        created = await tag_relation_controller.create_item(relation_in)
+    except DoesNotExist:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="关联的标签不存在")
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    return await TagRelationOut.from_tortoise_orm(created)
+
+
+@tag_relation.get("/{relation_id}", response_model=TagRelationOut)
+async def get_tag_relation(relation_id: int):
+    try:
+        record = await tag_relation_controller.get_item(relation_id)
+    except DoesNotExist:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="标签关联不存在")
+    return await TagRelationOut.from_tortoise_orm(record)
+
+
+@tag_relation.put("/{relation_id}", response_model=TagRelationOut)
+async def update_tag_relation(relation_id: int, relation_in: TagRelationUpdate):
+    try:
+        updated = await tag_relation_controller.update_item(relation_id, relation_in)
+    except DoesNotExist:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="标签关联不存在")
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    return await TagRelationOut.from_tortoise_orm(updated)
+
+
+@tag_relation.delete("/{relation_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_tag_relation(relation_id: int):
+    try:
+        await tag_relation_controller.delete_item(relation_id)
+    except DoesNotExist:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="标签关联不存在")
+
+
+# @tag.post("/test")
+# async def test():
+#     test=await TestModel.create(id=1)
+#     aa=await AA.get(id=1)
+#     await test.name_id.add(aa)

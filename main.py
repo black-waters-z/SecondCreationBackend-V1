@@ -59,7 +59,8 @@ async def health_check():
 app.include_router(user, tags=["用户管理接口"])
 app.include_router(file, tags=["文件上传"])
 app.include_router(article, tags=["文章管理接口"])
-app.include_router(role_tag, tags=["角色标签接口"])
+app.include_router(tag, tags=["标签管理接口"])
+app.include_router(tag_relation, tags=["标签关联接口"])
 
 if __name__ == '__main__':
     # 宿舍

@@ -23,25 +23,39 @@ class TagRelationController(
     def __init__(self) -> None:
         super().__init__(TagRelation)
 
+    async def list_relations(
+            self,
+            other_tag_id: int | None = None,
+    ):
+        tag_relations = await TagRelation.filter(character_tag=other_tag_id).select_related("work_tag",
+                                                                                            "character_tag").all()
+        other_tag = await Tag.get(id=other_tag_id)
+        work_tags = []
+        if tag_relations:
+            for relation in tag_relations:
+                work_tags.append(relation.work_tag)
+
+        return {"work_tags": work_tags, "other_tag": other_tag}
+
     async def create_item(
-        self, obj_in: TagRelationCreate | Dict[str, Any]
+            self, obj_in: TagRelationCreate | Dict[str, Any]
     ) -> TagRelation:
         payload = await self._normalize_payload(obj_in, partial=False)
         return await super().create_item(payload)
 
     async def update_item(
-        self,
-        id: int,
-        obj_in: TagRelationUpdate | Dict[str, Any],
+            self,
+            id: int,
+            obj_in: TagRelationUpdate | Dict[str, Any],
     ) -> TagRelation:
         payload = await self._normalize_payload(obj_in, partial=True)
         return await super().update_item(id, payload)
 
     async def _normalize_payload(
-        self,
-        obj_in: TagRelationCreate | TagRelationUpdate | Dict[str, Any],
-        *,
-        partial: bool,
+            self,
+            obj_in: TagRelationCreate | TagRelationUpdate | Dict[str, Any],
+            *,
+            partial: bool,
     ) -> Dict[str, Any]:
         if isinstance(obj_in, dict):
             payload = obj_in

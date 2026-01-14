@@ -14,6 +14,7 @@ from backend.schemas import (
     TagRelationUpdate,
     TagType,
     TagUpdate,
+    ArticleCreate
 )
 
 tag = APIRouter(prefix="/tags")
@@ -34,20 +35,29 @@ class TagRelationListResponse(BaseModel):
 
 @tag.get("/", response_model=TagListResponse)
 async def list_tags(
-    page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
-    tag_type: Optional[TagType] = Query(default=None),
-    keyword: Optional[str] = Query(default=None),
+        page: int = Query(1, ge=1),
+        page_size: int = Query(20, ge=1, le=100),
+        tag_type: Optional[TagType] = Query(default=None),
+        keyword: Optional[str] = Query(default=None),
+        all: bool = Query(default=False, description="是否返回所有标签"),
 ):
     search = Q()
+    filter_kwargs = {}
     if tag_type:
         search &= Q(type=tag_type)
+        filter_kwargs["type"] = tag_type
     if keyword:
         search &= Q(name__icontains=keyword)
+        filter_kwargs["name__icontains"] = keyword
 
-    total, records = await tag_controller.list_items(
-        page=page, page_size=page_size, search=search, order=["-created_at"]
-    )
+    if all:
+        query = Tag.filter(**filter_kwargs) if filter_kwargs else Tag.all()
+        records = await query.order_by("-created_at")
+        total = len(records)
+    else:
+        total, records = await tag_controller.list_items(
+            page=page, page_size=page_size, search=search, order=["-created_at"]
+        )
     items = [await TagOut.from_tortoise_orm(obj) for obj in records]
     return TagListResponse(total=total, items=items)
 
@@ -56,6 +66,65 @@ async def list_tags(
 async def create_tag(tag_in: TagCreate):
     created = await tag_controller.create_item(tag_in)
     return await TagOut.from_tortoise_orm(created)
+
+
+class TagsIn(BaseModel):
+    workTags: List[str] = None
+    characterTags: List[str] = None
+    crossTags: List[str] = None
+
+
+# 返回处理好后的文章tag_ids,呃，这个之后再说吧，可能会有更好的处理方案，
+# 也许可以做个依赖直接插入呢，这样子只需要一个接口就可以完成。
+@tag.post("/articleTags", status_code=status.HTTP_201_CREATED)
+async def create_article_tags(tag_in: TagsIn):
+    tag_objects = []
+
+    # 获取已存在的标签
+    existing_tags = await Tag.all().values('name', 'type')  # 获取数据库中所有标签的name和type字段
+    existing_tags_set = {(tag['name'], tag['type']) for tag in existing_tags}
+
+    if tag_in.workTags:
+        for tag in tag_in.workTags:
+            if (tag, 'work') not in existing_tags_set:  # 检查是否已存在该标签
+                tag_objects.append(Tag(name=tag, type='work'))
+
+    if tag_in.characterTags:
+        for tag in tag_in.characterTags:
+            if (tag, 'character') not in existing_tags_set:
+                tag_objects.append(Tag(name=tag, type='character'))
+
+    if tag_in.crossTags:
+        for tag in tag_in.crossTags:
+            if (tag, 'cross') not in existing_tags_set:
+                tag_objects.append(Tag(name=tag, type='cross'))
+
+    # 批量插入新的标签
+    await Tag.bulk_create(tag_objects)
+
+    work_tags = await Tag.filter(type='work', name__in=tag_in.workTags).all()
+    character_tags = await Tag.filter(type='character', name__in=tag_in.characterTags).all()
+    cross_tags = await Tag.filter(type='cross', name__in=tag_in.crossTags).all()
+
+    tag_relations = []
+    existing_tags_relations = await TagRelation.all().values('work_tag_id',
+                                                             'character_tag_id')  # 获取数据库中所有标签的name和type字段
+    existing_tags_relations_set = {(relation['work_tag_id'], relation['character_tag_id']) for relation in
+                                   existing_tags_relations}
+
+    for work_tag in work_tags:
+        for character_tag in character_tags:
+            if (work_tag.id, character_tag.id) not in existing_tags_relations_set:
+                tag_relations.append(TagRelation(work_tag=work_tag, character_tag=character_tag))
+
+        for cross_tag in cross_tags:
+            if (work_tag.id, cross_tag.id) not in existing_tags_relations_set:
+                tag_relations.append(TagRelation(work_tag=work_tag, character_tag=cross_tag))
+
+    await TagRelation.bulk_create(tag_relations)
+    return {"message": "Tags successfully created",
+            "tag_ids": [tag.id for tag in [*work_tags, *character_tags, *cross_tags]]
+            }
 
 
 @tag.get("/{tag_id}", response_model=TagOut)
@@ -84,24 +153,9 @@ async def delete_tag(tag_id: int):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tag not found")
 
 
-@tag_relation.get("/", response_model=TagRelationListResponse)
-async def list_tag_relations(
-    page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
-    work_tag_id: Optional[int] = Query(default=None),
-    character_tag_id: Optional[int] = Query(default=None),
-):
-    search = Q()
-    if work_tag_id:
-        search &= Q(work_tag_id=work_tag_id)
-    if character_tag_id:
-        search &= Q(character_tag_id=character_tag_id)
-
-    total, records = await tag_relation_controller.list_items(
-        page=page, page_size=page_size, search=search, order=["-created_at"]
-    )
-    items = [await TagRelationOut.from_tortoise_orm(obj) for obj in records]
-    return TagRelationListResponse(total=total, items=items)
+@tag_relation.get("/get_work_tags", status_code=status.HTTP_200_OK)
+async def list_tag_relations(other_tag_id: int | None = None):
+    return await tag_relation_controller.list_relations(other_tag_id=other_tag_id)
 
 
 @tag_relation.post("/", response_model=TagRelationOut, status_code=status.HTTP_201_CREATED)
@@ -141,7 +195,6 @@ async def delete_tag_relation(relation_id: int):
         await tag_relation_controller.delete_item(relation_id)
     except DoesNotExist:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="标签关联不存在")
-
 
 # @tag.post("/test")
 # async def test():

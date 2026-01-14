@@ -58,6 +58,43 @@ async def upload_image_file(image: UploadFile = File(...)):
     }
 
 
+@file.post("/upload-video-file")
+async def upload_video_file(video: UploadFile = File(...)):
+    allowed_video_types = {
+        "video/mp4": ".mp4",
+        "video/webm": ".webm",
+        "video/ogg": ".ogv",
+    }
+
+    if video.content_type not in allowed_video_types:
+        raise HTTPException(status_code=400, detail="Unsupported video format")
+
+    filename = f"{uuid.uuid4().hex}{allowed_video_types[video.content_type]}"
+    upload_dir = os.path.join("backend", "static", "upload_Video")
+    os.makedirs(upload_dir, exist_ok=True)
+    save_path = os.path.join(upload_dir, filename)
+
+    try:
+        contents = await video.read()
+        if not contents:
+            raise HTTPException(status_code=400, detail="Uploaded file is empty")
+
+        with open(save_path, "wb") as buffer:
+            buffer.write(contents)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Server error: {exc}")
+
+    return {
+        "status": "success",
+        "message": "Video uploaded successfully",
+        "objectUrl": f"/static/upload_Video/{filename}",
+        "filename": filename,
+        "fileSize": len(contents),
+    }
+
+
 @file.post("/upload-image")
 async def post_upload_image(request: ImageUploadRequest):
     try:

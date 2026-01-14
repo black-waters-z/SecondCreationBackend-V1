@@ -61,6 +61,7 @@ app.include_router(file, tags=["文件上传"])
 app.include_router(article, tags=["文章管理接口"])
 app.include_router(tag, tags=["标签管理接口"])
 app.include_router(tag_relation, tags=["标签关联接口"])
+app.include_router(user_view_history, tags=["用户浏览记录接口"])
 
 if __name__ == '__main__':
     # 宿舍

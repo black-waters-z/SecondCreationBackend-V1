@@ -62,6 +62,10 @@ app.include_router(article, tags=["文章管理接口"])
 app.include_router(tag, tags=["标签管理接口"])
 app.include_router(tag_relation, tags=["标签关联接口"])
 app.include_router(user_view_history, tags=["用户浏览记录接口"])
+app.include_router(goods, tags=["商品管理接口"])
+app.include_router(good_choices, tags=["商品选项接口"])
+app.include_router(good_comments, tags=["商品评论接口"])
+app.include_router(good_comment_likes, tags=["商品评论点赞接口"])
 
 if __name__ == '__main__':
     # 宿舍

@@ -25,6 +25,17 @@ from .activity import (
     UserViewHistoryCreate,
     UserViewHistoryUpdate,
 )
+from .shop import (
+    GoodCreate,
+    GoodWithChoicesCreate,
+    GoodUpdate,
+    GoodChoiceCreate,
+    GoodChoiceUpdate,
+    GoodCommentCreate,
+    GoodCommentUpdate,
+    GoodCommentLikeCreate,
+    GoodCommentLikeUpdate,
+)
 
 __all__ = [
     "UserCreate",
@@ -52,4 +63,13 @@ __all__ = [
     "RewardUpdate",
     "UserInterestCreate",
     "UserInterestUpdate",
+    "GoodCreate",
+    "GoodWithChoicesCreate",
+    "GoodUpdate",
+    "GoodChoiceCreate",
+    "GoodChoiceUpdate",
+    "GoodCommentCreate",
+    "GoodCommentUpdate",
+    "GoodCommentLikeCreate",
+    "GoodCommentLikeUpdate",
 ]

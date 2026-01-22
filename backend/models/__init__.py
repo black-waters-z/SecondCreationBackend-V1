@@ -4,6 +4,7 @@
 
 # models/__init__.py
 from .mysql import *
+from .shop import *
 from .test import *
 # 导出所有模型
 __all__ = [
@@ -11,6 +12,7 @@ __all__ = [
     'UserViewHistory', 'UserFavorite', 'UserLike', 'Reward',
     'ArticleRewardRanking', 'UserInterest', 'ArticleRecommendation',
     'ArticleComment',
+    'Good', 'GoodChoice', 'GoodComment', 'GoodCommentLike',
 ]
 """
 数据库迁移命令:

@@ -26,6 +26,16 @@ from .activity import (
     user_like_controller,
     user_view_history_controller,
 )
+from .shop import (
+    GoodController,
+    GoodChoiceController,
+    GoodCommentController,
+    GoodCommentLikeController,
+    good_controller,
+    good_choice_controller,
+    good_comment_controller,
+    good_comment_like_controller,
+)
 
 __all__ = [
     "ApiController",
@@ -41,6 +51,10 @@ __all__ = [
     "UserLikeController",
     "UserProfileController",
     "UserViewHistoryController",
+    "GoodController",
+    "GoodChoiceController",
+    "GoodCommentController",
+    "GoodCommentLikeController",
     "article_controller",
     "article_recommendation_controller",
     "article_reward_ranking_controller",
@@ -53,4 +67,8 @@ __all__ = [
     "user_like_controller",
     "user_profile_controller",
     "user_view_history_controller",
+    "good_controller",
+    "good_choice_controller",
+    "good_comment_controller",
+    "good_comment_like_controller",
 ]

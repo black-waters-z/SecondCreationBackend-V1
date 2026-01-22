@@ -3,3 +3,4 @@ from .article import article
 from .file import file
 from .tag import tag, tag_relation
 from .user_view_history import user_view_history
+from .shop import goods, good_choices, good_comments, good_comment_likes

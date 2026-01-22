@@ -1,7 +1,8 @@
 from datetime import timedelta
 from typing import List, Optional
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel
 from tortoise.contrib.pydantic import pydantic_model_creator
 from tortoise.exceptions import DoesNotExist
@@ -22,11 +23,6 @@ UserOut = pydantic_model_creator(User, name="UserOut", exclude=("password_hash",
 class UserListResponse(BaseModel):
     total: int
     items: List[UserOut]
-
-
-class LoginRequest(BaseModel):
-    username: str
-    password: str
 
 
 class LoginResponse(BaseModel):
@@ -58,8 +54,8 @@ async def list_users(
 
 
 @user.post("/login", response_model=LoginResponse)
-async def login(credentials: LoginRequest):
-    user_record = await User.filter(username=credentials.username).first()
+async def login(form_data: OAuth2PasswordRequestForm = Depends()):
+    user_record = await User.filter(username=form_data.username).first()
     if not user_record:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -70,7 +66,7 @@ async def login(credentials: LoginRequest):
             status_code=status.HTTP_403_FORBIDDEN,
             detail="用户已被禁用",
         )
-    verify = verify_password(credentials.password, user_record.password_hash)
+    verify = verify_password(form_data.password, user_record.password_hash)
     if not verify:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

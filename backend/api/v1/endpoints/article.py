@@ -99,8 +99,8 @@ def _resolve_time_range(
 
 @article.get("/get-filter-articles", response_model=ArticleListResponse)
 async def get_filtered_articles(
-    range_type: str = Query(..., description="统计周期 year、month 或 week"),
-    year: int = Query(..., ge=1900, description="查询年份"),
+    range_type: Optional[str] = Query(None, description="统计周期 year、month 或 week"),
+    year: Optional[int] = Query(None, ge=1900, description="查询年份"),
     month: Optional[int] = Query(None, ge=1, le=12, description="查询月份"),
     day: Optional[int] = Query(None, ge=1, le=31, description="查询日（week类型需要）"),
     tags: Optional[str] = Query(
@@ -108,19 +108,25 @@ async def get_filtered_articles(
     ),
     page: int = Query(1, ge=1),
 ):
-    try:
-        start_dt, end_dt = _resolve_time_range(range_type, year, month, day)
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
-        ) from exc
+    query = Article.filter(status="published")
 
-    query = Article.filter(
-        status="published",
-        published_at__gte=start_dt,
-        published_at__lt=end_dt,
-    )
+    if range_type:
+        if year is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="当指定range_type时必须提供year参数",
+            )
+        try:
+            start_dt, end_dt = _resolve_time_range(range_type, year, month, day)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(exc),
+            ) from exc
+        query = query.filter(
+            published_at__gte=start_dt,
+            published_at__lt=end_dt,
+        )
 
     tag_ids: List[int] = []
     if tags:
@@ -137,7 +143,6 @@ async def get_filtered_articles(
     page_size = 10
     offset = (page - 1) * page_size
 
-    total = await query.count()
     records = await (
         query.order_by(
             "-view_count",
@@ -154,9 +159,9 @@ async def get_filtered_articles(
     for article_obj in records:
         if article_obj.content:
             article_obj.content = article_obj.content[:100]
-        items.append(await ArticleOut.from_tortoise_orm(article_obj))
-
-    return ArticleListResponse(total=total, items=items)
+        items.append(await article_obj)
+    count = len(items)
+    return ArticleListResponse(total=10, items=items)
 
 
 @article.get("/from_tag_get", response_model=List[ArticleOut])

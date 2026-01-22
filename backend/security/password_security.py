@@ -37,7 +37,7 @@ def create_access_token(data: dict, expires_delta: Union[timedelta, None] = None
 
 
 # 创建依赖，会自动验证请求头中的jwt令牌
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login",scheme_name="Bearer")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/users/login",scheme_name="Bearer")
 
 
 async def get_current_user(token: Annotated[str, Depends(oauth2_scheme)]):

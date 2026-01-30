@@ -59,6 +59,7 @@ async def health_check():
 app.include_router(user, tags=["用户管理接口"])
 app.include_router(file, tags=["文件上传"])
 app.include_router(article, tags=["文章管理接口"])
+app.include_router(comment, tags=["文章评论接口"])
 app.include_router(tag, tags=["标签管理接口"])
 app.include_router(tag_relation, tags=["标签关联接口"])
 app.include_router(user_view_history, tags=["用户浏览记录接口"])
@@ -66,6 +67,8 @@ app.include_router(goods, tags=["商品管理接口"])
 app.include_router(good_choices, tags=["商品选项接口"])
 app.include_router(good_comments, tags=["商品评论接口"])
 app.include_router(good_comment_likes, tags=["商品评论点赞接口"])
+app.include_router(cart, tags=["购物车接口"])
+app.include_router(collection, tags=["合集接口"])
 
 if __name__ == '__main__':
     # 宿舍

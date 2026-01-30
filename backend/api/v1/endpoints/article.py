@@ -1,14 +1,22 @@
-from fastapi import APIRouter, HTTPException, status, Query
-from pydantic import BaseModel
+from datetime import datetime, timedelta
+from decimal import Decimal
+from typing import Annotated, List, Optional, Tuple
+from settings import APP_BASE_URL
+import jwt
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from jwt import InvalidTokenError
+from pydantic import BaseModel, Field
 from tortoise import fields
+
+from backend.config import ALGORITHM, SECRET_KEY
 from backend.controller import article_controller
-from backend.models import Article
+from backend.models import Article, Collection, UserFavorite, UserLike, UserViewHistory, User
 from backend.schemas import ArticleCreate, ArticleUpdate
+from backend.security.password_security import oauth2_scheme
 
 article = APIRouter(prefix="/articles", tags=["文章管理接口"])
-from typing import List, Optional, Tuple
-from decimal import Decimal
-from datetime import datetime, timedelta
+
+
 # TagOut 模型，用于表示标签信息
 
 class TagOut(BaseModel):
@@ -17,6 +25,7 @@ class TagOut(BaseModel):
 
     class Config:
         from_attributes = True  # 使其支持从 ORM 对象转换
+
 
 # ArticleOut 模型，用于表示文章信息
 class ArticleOut(BaseModel):
@@ -34,14 +43,75 @@ class ArticleOut(BaseModel):
     created_at: datetime
     updated_at: datetime
     published_at: Optional[datetime] = None
-    tags: List[TagOut] =None
+    tags: List[TagOut] = None
+    has_liked: Optional[bool] = False
+    has_favorited: Optional[bool] = False
 
     class Config:
-        from_attributes = True   # 使其支持从 ORM 对象转换
+        from_attributes = True  # 使其支持从 ORM 对象转换
+
+
+class UserInfo(BaseModel):
+    id: int
+    name: str
+    avatar: str
+
+
+class Pr_Nx_ArticleOut(BaseModel):
+    id: int
+    title: str
+
+
+class ArticleCollectionIn(BaseModel):
+    id: int
+    name: str
+    previous: Optional[Pr_Nx_ArticleOut] = None
+    next: Optional[Pr_Nx_ArticleOut] = None
+
+
+class ArticlePageOut(BaseModel):
+    article: ArticleOut
+    userInfo: UserInfo
+    collection: Optional[ArticleCollectionIn] = None
+
 
 class ArticleListResponse(BaseModel):
     total: int
     items: List[ArticleOut]
+
+
+class ArticleHistoryRecordIn(BaseModel):
+    articleId: int = Field(..., ge=1)
+    duration: Optional[int] = Field(default=None, ge=0)
+
+
+def _extract_user_id_from_token(token: str) -> int:
+    try:
+        decoded = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+    except InvalidTokenError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="凭证无效",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    user_id = decoded.get("uid")
+    if not user_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="凭证无效",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return user_id
+
+
+def _build_user_info(user: Optional[User]) -> UserInfo:
+    if not user:
+        return UserInfo(id=0, name="", avatar="")
+    return UserInfo(
+        id=user.id,
+        name=user.username or "",
+        avatar=user.avatar_url or "",
+    )
 
 
 @article.get("/page/{page}")
@@ -51,26 +121,205 @@ async def list_articles(page: int):
     return ArticleListResponse(total=total, items=items)
 
 
-@article.get("/recommendations", response_model=List[ArticleOut])
-async def get_recommended_articles(
-    limit: int = Query(default=15, ge=1, le=50, description="返回的推荐文章数量"),
+@article.get(
+    "/favorites",
+    response_model=List[ArticleOut],
+    summary="分页查询当前用户收藏",
+)
+async def list_favorite_articles(
+        token: Annotated[str, Depends(oauth2_scheme)],
+        page: int = Query(1, ge=1),
+) -> List[ArticleOut]:
+    user_id = _extract_user_id_from_token(token)
+    page_size = 100
+    offset = (page - 1) * page_size
+    favorites = await (
+        UserFavorite.filter(user_id=user_id)
+            .order_by("-favorited_at")
+            .offset(offset)
+            .limit(page_size)
+            .prefetch_related("article__tags")
+    )
+    articles: List[ArticleOut] = []
+    for favorite in favorites:
+        article_obj = getattr(favorite, "article", None)
+        if not article_obj:
+            continue
+        article_obj.content = article_obj.content[:100]
+        article_obj.has_favorited = True
+        article_obj.image_urls=_parse_image_url(article_obj)
+        articles.append(article_obj)
+    return articles
+
+
+@article.get(
+    "/likes",
+    response_model=List[ArticleOut],
+    summary="分页查询当前用户点赞",
+)
+async def list_liked_articles(
+    token: Annotated[str, Depends(oauth2_scheme)],
+    page: int = Query(1, ge=1),
+) -> List[ArticleOut]:
+    user_id = _extract_user_id_from_token(token)
+    page_size = 15
+    offset = (page - 1) * page_size
+    likes = await (
+        UserLike.filter(user_id=user_id)
+        .order_by("-liked_at")
+        .offset(offset)
+        .limit(page_size)
+        .prefetch_related("article__tags")
+    )
+    article_ids = {like.article_id for like in likes if getattr(like, "article_id", None)}
+    favorited_ids: set[int] = set()
+    if article_ids:
+        favorited_ids = set(
+            await UserFavorite.filter(
+                user_id=user_id,
+                article_id__in=list(article_ids),
+            ).values_list("article_id", flat=True)
+        )
+    articles: List[ArticleOut] = []
+    for like in likes:
+        article_obj = getattr(like, "article", None)
+        if not article_obj:
+            continue
+        article_obj.content = article_obj.content[:100]
+        article_obj.has_liked = True
+        article_obj.has_favorited = article_obj.id in favorited_ids
+        article_obj.image_urls=_parse_image_url(article_obj)
+        articles.append(article_obj)
+    return articles
+
+
+@article.post("/favorite/{article_id}")
+async def delete_or_add_favorite_article(token: Annotated[str, Depends(oauth2_scheme)], article_id: int):
+    try:
+        user_id = _extract_user_id_from_token(token)
+        favorite_exist = await UserFavorite.filter(user_id=user_id, article_id=article_id).exists()
+        if favorite_exist:
+            await UserFavorite.filter(user_id=user_id, article_id=article_id).delete()
+            message="删除成功"
+        else:
+            await UserFavorite.create(user_id=user_id, article_id=article_id)
+            message="添加成功"
+        return {"message": message}
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="收藏操作失败",
+        )
+
+
+@article.post("/like/{article_id}")
+async def delete_or_add_like_article(
+    token: Annotated[str, Depends(oauth2_scheme)],
+    article_id: int,
 ):
+    try:
+        user_id = _extract_user_id_from_token(token)
+        like_exist = await UserLike.filter(user_id=user_id, article_id=article_id).exists()
+        if like_exist:
+            await UserLike.filter(user_id=user_id, article_id=article_id).delete()
+            message = "取消点赞成功"
+        else:
+            await UserLike.create(user_id=user_id, article_id=article_id)
+            message = "点赞成功"
+        return {"message": message}
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="点赞操作失败",
+        )
+
+
+@article.get(
+    "/history",
+    response_model=List[ArticleOut],
+    summary="分页查询用户浏览历史",
+)
+async def list_view_history(
+        token: Annotated[str, Depends(oauth2_scheme)],
+        page: int = Query(1, ge=1),
+) -> List[ArticleOut]:
+    user_id = _extract_user_id_from_token(token)
+    page_size = 15
+    offset = (page - 1) * page_size
+    histories = await (
+        UserViewHistory.filter(user_id=user_id)
+            .order_by("-viewed_at")
+            .offset(offset)
+            .limit(page_size)
+            .prefetch_related("article__tags")
+    )
+    articles: List[ArticleOut] = []
+    for history in histories:
+        article_obj = getattr(history, "article", None)
+        if not article_obj:
+            continue
+        articles.append(await ArticleOut.from_tortoise_orm(article_obj))
+    return articles
+
+
+@article.post(
+    "/history",
+    response_model=ArticleOut,
+    status_code=status.HTTP_201_CREATED,
+    summary="记录用户浏览历史",
+)
+async def create_view_history(
+        payload: ArticleHistoryRecordIn,
+        token: Annotated[str, Depends(oauth2_scheme)],
+) -> ArticleOut:
+    user_id = _extract_user_id_from_token(token)
+    article_obj = await Article.filter(id=payload.articleId).prefetch_related("tags").first()
+    if not article_obj:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="文章不存在",
+        )
+    duration_value = payload.duration if payload.duration is not None else 0
+    existing = await UserViewHistory.filter(
+        user_id=user_id,
+        article_id=payload.articleId,
+    ).first()
+    if existing:
+        await existing.delete()
+    await UserViewHistory.create(
+        user_id=user_id,
+        article_id=payload.articleId,
+        duration=duration_value,
+    )
+    return await ArticleOut.from_tortoise_orm(article_obj)
+
+
+@article.get("/recommendations", response_model=List[ArticleOut])
+async def get_recommended_articles(token: Annotated[str, Depends(oauth2_scheme)],
+                                   limit: int = Query(default=15, ge=1, le=50, description="返回的推荐文章数量"),
+                                   ):
+    user_id = _extract_user_id_from_token(token)
     query = (
         Article.filter(status="published")
-        .order_by("-view_count", "-like_count", "-favorite_count", "-reward_amount")
-        .limit(limit)
+            .order_by("-view_count", "-like_count", "-favorite_count", "-reward_amount")
+            .limit(limit)
     )
     articles = await query.prefetch_related("tags")
+    await UserLike.filter()
     serialized_articles: List[ArticleOut] = []
+    favorited_list = await UserFavorite.filter(user_id=user_id).all().values_list("article_id", flat=True)
     for article_obj in articles:
         if article_obj.content:
             article_obj.content = article_obj.content[:100]
+        favorited = article_obj.id in favorited_list
+        article_obj.has_favorited = favorited
+        article_obj.image_urls=_parse_image_url(article_obj)
         serialized_articles.append(article_obj)
     return serialized_articles
 
 
 def _resolve_time_range(
-    range_type: str, year: int, month: Optional[int], day: Optional[int]
+        range_type: str, year: int, month: Optional[int], day: Optional[int]
 ) -> Tuple[datetime, datetime]:
     normalized = range_type.lower()
     if normalized == "year":
@@ -99,15 +348,17 @@ def _resolve_time_range(
 
 @article.get("/get-filter-articles", response_model=ArticleListResponse)
 async def get_filtered_articles(
-    range_type: Optional[str] = Query(None, description="统计周期 year、month 或 week"),
-    year: Optional[int] = Query(None, ge=1900, description="查询年份"),
-    month: Optional[int] = Query(None, ge=1, le=12, description="查询月份"),
-    day: Optional[int] = Query(None, ge=1, le=31, description="查询日（week类型需要）"),
-    tags: Optional[str] = Query(
-        None, description="标签ID，多个以逗号分割，例如 1,2,3"
-    ),
-    page: int = Query(1, ge=1),
+        token: Annotated[str, Depends(oauth2_scheme)],
+        range_type: Optional[str] = Query(None, description="统计周期 year、month 或 week"),
+        year: Optional[int] = Query(None, ge=1900, description="查询年份"),
+        month: Optional[int] = Query(None, ge=1, le=12, description="查询月份"),
+        day: Optional[int] = Query(None, ge=1, le=31, description="查询日（week类型需要）"),
+        tags: Optional[str] = Query(
+            None, description="标签ID，多个以逗号分割，例如 1,2,3"
+        ),
+        page: int = Query(1, ge=1),
 ):
+    user_id = _extract_user_id_from_token(token)
     query = Article.filter(status="published")
 
     if range_type:
@@ -150,18 +401,21 @@ async def get_filtered_articles(
             "-favorite_count",
             "-reward_amount",
         )
-        .offset(offset)
-        .limit(page_size)
-        .prefetch_related("tags")
+            .offset(offset)
+            .limit(page_size)
+            .prefetch_related("tags")
     )
 
+    # 获取用户收藏的id
+    favorited_ids = await UserFavorite.filter(user_id=user_id).values_list("article_id", flat=True)
     items: List[ArticleOut] = []
     for article_obj in records:
         if article_obj.content:
             article_obj.content = article_obj.content[:100]
-        items.append(await article_obj)
+        article_obj.has_favorited = article_obj.id in favorited_ids
+        items.append(article_obj)
     count = len(items)
-    return ArticleListResponse(total=10, items=items)
+    return ArticleListResponse(total=count, items=items)
 
 
 @article.get("/from_tag_get", response_model=List[ArticleOut])
@@ -191,23 +445,154 @@ async def list_articles(tag_id: str = Query(default=None)):
     return [article for article in articles]
 
 
-@article.post("",response_model=ArticleOut)
-async def create_article(article_in: ArticleCreate):
+@article.post("", response_model=ArticleOut)
+async def create_article(
+        article_in: ArticleCreate,
+        token: Annotated[str, Depends(oauth2_scheme)],
+):
+    user_id = _extract_user_id_from_token(token)
     try:
-        # 这里再查一下tag_id
         article_obj = await article_controller.create(article_in)
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(exc),
         )
-    return await article_obj
+    if article_in.collection:
+        collection_data = article_in.collection.model_dump(exclude_none=True)
+        name_value = collection_data.get("name")
+        existing = (
+            await Collection.filter(author_id=user_id, name=name_value or "")
+                .first()
+            if name_value
+            else None
+        )
+        if existing:
+            article_obj.collection_id = existing.id
+        else:
+            new_collection = await Collection.create(
+                author_id=user_id,
+                name=name_value or "",
+                description=collection_data.get("description"),
+                image_url=collection_data.get("image_url"),
+            )
+            article_obj.collection_id = new_collection.id
+        await article_obj.save()
+    return article_obj
 
 
-@article.get("/detail/{article_id}")
-async def get_article(article_id: int):
-    article_obj = await article_controller.get_item(article_id)
-    return await ArticleOut.from_tortoise_orm(article_obj)
+def _parse_image_url(article_obj:dict):
+    images = []
+    if hasattr(article_obj, 'image_urls') and article_obj.image_urls:
+        for image_url in article_obj.image_urls:
+            if not image_url.startswith("http"):
+                if image_url.endswith(".png") or image_url.endswith(".jpg") or image_url.endswith(".jpeg"):
+                    images.append(APP_BASE_URL + '/static/upload_IMG/' + image_url)
+                else:
+                    images.append(APP_BASE_URL + '/static/upload_Video/' + image_url)
+    return images
+
+# 查询整个文章的接口
+@article.get(
+    "/{article_id}/with-status",
+    response_model=ArticlePageOut,
+    summary="根据文章ID查询（包含点赞/收藏状态）",
+)
+async def get_article_with_status(
+        article_id: int,
+        token: Annotated[str, Depends(oauth2_scheme)],
+) -> ArticlePageOut:
+    user_id = _extract_user_id_from_token(token)
+    article_obj = (
+        await Article.filter(id=article_id)
+            .prefetch_related("tags")
+            .prefetch_related("collection")
+            .prefetch_related("author")
+            .first()
+    )
+    if not article_obj:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="文章不存在",
+        )
+    liked = await UserLike.filter(user_id=user_id, article_id=article_id).exists()
+    favorited = await UserFavorite.filter(user_id=user_id, article_id=article_id).exists()
+
+    # 处理标签数据
+    tags_data = []
+    if hasattr(article_obj, 'tags'):
+        # 预加载的标签已经可以直接访问
+        async for tag in article_obj.tags:
+            tags_data.append(TagOut.from_orm(tag))
+
+    # 构建 ArticleOut 实例
+    images = []
+    if hasattr(article_obj, 'image_urls') and article_obj.image_urls:
+        for image_url in article_obj.image_urls:
+            if not image_url.startswith("http"):
+                if image_url.endswith(".png") or image_url.endswith(".jpg") or image_url.endswith(".jpeg"):
+                    images.append(APP_BASE_URL + '/static/upload_IMG/' + image_url)
+                else:
+                    images.append(APP_BASE_URL + '/static/upload_Video/' + image_url)
+
+    article_out = ArticleOut(
+        id=article_obj.id,
+        title=article_obj.title,
+        subtitle=article_obj.subtitle,
+        author_id=article_obj.author_id,
+        content=article_obj.content,
+        image_urls=images,
+        view_count=article_obj.view_count,
+        like_count=article_obj.like_count,
+        favorite_count=article_obj.favorite_count,
+        reward_amount=article_obj.reward_amount,
+        status=article_obj.status,
+        created_at=article_obj.created_at,
+        updated_at=article_obj.updated_at,
+        published_at=article_obj.published_at,
+        tags=tags_data,
+        has_liked=liked,
+        has_favorited=favorited
+    )
+
+    # 获取作者信息
+    author = getattr(article_obj, "author", None)
+    if author:
+        author_info = UserInfo(
+            id=author.id,
+            name=author.username,
+            avatar=author.avatar_url,
+        )
+    else:
+        author_info = UserInfo(id=0, name="", avatar="")
+
+    collection_payload = None
+    if article_obj.collection_id:
+        collection_obj = await article_obj.collection
+        previous_article = await (
+            Article.filter(collection_id=collection_obj.id, id__lt=article_obj.id)
+                .order_by("-id")
+                .first()
+        )
+        next_article = await (
+            Article.filter(collection_id=collection_obj.id, id__gt=article_obj.id)
+                .order_by("id")
+                .first()
+        )
+        previous = Pr_Nx_ArticleOut(id=previous_article.id, title=previous_article.title) if previous_article else None
+        next = Pr_Nx_ArticleOut(id=next_article.id, title=next_article.title) if next_article else None
+        collection_payload = ArticleCollectionIn(
+            id=collection_obj.id,
+            name=collection_obj.name,
+            previous=previous,
+            next=next
+        )
+
+    return ArticlePageOut(
+        article=article_out,
+        userInfo=author_info,
+        collection=collection_payload
+    )
 
 
 @article.put("/{article_id}")

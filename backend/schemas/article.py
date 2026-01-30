@@ -18,6 +18,16 @@ def _validate_image_urls(value: Optional[List[str]]) -> Optional[List[str]]:
     return cleaned
 
 
+class CollectionCreate(BaseModel):
+    name: str
+    description: Optional[str] = None
+    image_url: Optional[str] = None
+
+
+class CollectionIn(BaseModel):
+    name: str
+
+
 class ArticleCreate(BaseModel):
     title: str
     author_id: int
@@ -27,6 +37,7 @@ class ArticleCreate(BaseModel):
     status: Optional[str] = "published"
     published_at: Optional[datetime] = None
     tag_ids: Optional[List[int]] = None
+    collection: Optional[CollectionCreate] = None
 
     @field_validator("image_urls")
     @classmethod

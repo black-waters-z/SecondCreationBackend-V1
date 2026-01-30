@@ -29,10 +29,17 @@ class ArticleController(ApiController[Article, ArticleCreate, ArticleUpdate]):
     async def create(self, obj_in: ArticleCreate | Dict[str, Any]) -> Article:
         if isinstance(obj_in, dict):
             tag_ids = obj_in.get("tag_ids")
-            data = {k: v for k, v in obj_in.items() if k != "tag_ids"}
+            data = {
+                k: v
+                for k, v in obj_in.items()
+                if k not in {"tag_ids", "collection"}
+            }
         else:
             tag_ids = obj_in.tag_ids
-            data = obj_in.model_dump(exclude={"tag_ids"}, exclude_none=True)
+            data = obj_in.model_dump(
+                exclude={"tag_ids", "collection"},
+                exclude_none=True,
+            )
 
         article = await super().create(data)
         if tag_ids:

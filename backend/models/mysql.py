@@ -82,6 +82,12 @@ class Article(Model):
     author = fields.ForeignKeyField("models.User", related_name="articles")
     content = fields.TextField()
     image_urls = fields.JSONField(null=True)
+    collection = fields.ForeignKeyField(
+        "models.Collection",
+        related_name="articles",
+        null=True,
+        on_delete=SET_NULL,
+    )
 
     view_count = fields.IntField(default=0)
     like_count = fields.IntField(default=0)

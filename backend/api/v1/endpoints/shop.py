@@ -23,7 +23,6 @@ from backend.schemas import (
     GoodChoiceUpdate,
     GoodCommentCreate,
     GoodCommentLikeCreate,
-    GoodCommentLikeUpdate,
     GoodCreate,
     GoodWithChoicesCreate,
     GoodUpdate,
@@ -37,15 +36,19 @@ good_comment_likes = APIRouter(prefix="/good-comment-likes", tags=["商品评论
 
 COMMENT_PAGE_SIZE = 10
 
+
 def _extract_user_id_from_token(token: str) -> int:
     try:
         decoded = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
     except InvalidTokenError:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="????", headers={"WWW-Authenticate": "Bearer"})
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="????",
+                            headers={"WWW-Authenticate": "Bearer"})
     user_id = decoded.get("uid")
     if not user_id:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="????", headers={"WWW-Authenticate": "Bearer"})
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="????",
+                            headers={"WWW-Authenticate": "Bearer"})
     return user_id
+
 
 def _extract_user_id_from_token(token: str) -> int:
     try:
@@ -140,6 +143,22 @@ class StoreInfo(BaseModel):
     name: str = ""
 
 
+class StoreOwnerInfo(BaseModel):
+    name: str
+    avatar: str = ""
+
+
+class StoreGoodInfo(BaseModel):
+    id: int
+    goodImg: Optional[str] = None
+    title: str
+
+
+class StoreInfoDetail(BaseModel):
+    storeOwner: StoreOwnerInfo
+    Goods: List[StoreGoodInfo] = Field(default_factory=list)
+
+
 class CommentPayload(BaseModel):
     id: int
     goodId: int
@@ -171,7 +190,7 @@ class GoodInfosResponse(BaseModel):
     title: str
     description: Optional[str] = None
     goodImg: Optional[str] = None
-    store: StoreInfo
+    storeInfo: Optional[StoreInfoDetail] = None
     choices: List[GoodChoiceInfo] = Field(default_factory=list)
     comments: List[CommentInfo] = Field(default_factory=list)
 
@@ -207,16 +226,22 @@ class GoodCommentListResponse(BaseModel):
     items: List[CommentInfo]
 
 
+class GoodCommentDetailResponse(BaseModel):
+    comment: CommentInfo
+    storeInfo: Optional[StoreInfoDetail] = None
+    replies: GoodCommentListResponse
+
+
 class GoodListResponse(BaseModel):
     total: int
     items: List[GoodListItem]
 
 
 def _build_comment_infos(
-    comments: List[GoodComment],
-    *,
-    include_store_info: bool = False,
-    liked_comment_ids: Optional[Set[int]] = None,
+        comments: List[GoodComment],
+        *,
+        include_store_info: bool = False,
+        liked_comment_ids: Optional[Set[int]] = None,
 ) -> List[CommentInfo]:
     comment_infos: List[CommentInfo] = []
     for comment in comments:
@@ -227,7 +252,7 @@ def _build_comment_infos(
         icons = [icon]
 
         has_been_liked = (
-            bool(liked_comment_ids) and comment.id in liked_comment_ids
+                bool(liked_comment_ids) and comment.id in liked_comment_ids
         )
         user_model = getattr(comment, "user", None)
         user_payload = (
@@ -286,8 +311,8 @@ def _build_store_info(user: Optional[User]) -> StoreInfo:
 
 
 async def _get_liked_comment_ids(
-    user_id: Optional[int],
-    comment_ids: List[int],
+        user_id: Optional[int],
+        comment_ids: List[int],
 ) -> Set[int]:
     if not user_id or not comment_ids:
         return set()
@@ -297,12 +322,35 @@ async def _get_liked_comment_ids(
     return set(liked)
 
 
+async def _build_store_detail(publisher: Optional[User]) -> Optional[StoreInfoDetail]:
+    if not publisher:
+        return None
+    owner = StoreOwnerInfo(
+        name=publisher.username,
+        avatar=publisher.avatar_url or "",
+    )
+    related_goods = (
+        await Good.filter(publisher_id=publisher.id)
+            .order_by("-created_at")
+            .limit(10)
+    )
+    goods_payloads = [
+        StoreGoodInfo(
+            id=item.id,
+            goodImg=item.good_img,
+            title=item.title,
+        )
+        for item in related_goods
+    ]
+    return StoreInfoDetail(storeOwner=owner, Goods=goods_payloads)
+
+
 @goods.get("/", response_model=GoodListResponse)
 async def list_goods(
-    page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
-    keyword: Optional[str] = Query(default=None),
-    is_active: Optional[bool] = Query(default=None),
+        page: int = Query(1, ge=1),
+        page_size: int = Query(20, ge=1, le=100),
+        keyword: Optional[str] = Query(default=None),
+        is_active: Optional[bool] = Query(default=None),
 ):
     search = Q()
     if keyword:
@@ -338,8 +386,8 @@ async def _build_good_infos_response(good_id: int) -> GoodInfosResponse:
     choices = await GoodChoice.filter(good_id=good_id).order_by("display_order", "id")
     comments = (
         await GoodComment.filter(good_id=good_id)
-        .order_by("-created_at")
-        .prefetch_related("user")
+            .order_by("-created_at")
+            .prefetch_related("user")
     )
 
     choice_payloads = [
@@ -354,14 +402,15 @@ async def _build_good_infos_response(good_id: int) -> GoodInfosResponse:
     ]
 
     comment_infos = _build_comment_infos(comments)
-    store = _build_store_info(getattr(good, "publisher", None))
+    publisher = getattr(good, "publisher", None)
+    store_detail = await _build_store_detail(publisher)
 
     return GoodInfosResponse(
         id=good.id,
         title=good.title,
         description=good.description,
         goodImg=good.good_img,
-        store=store,
+        storeInfo=store_detail,
         choices=choice_payloads,
         comments=comment_infos,
     )
@@ -414,9 +463,9 @@ async def delete_good(good_id: int):
 
 @good_choices.get("/", response_model=GoodChoiceListResponse)
 async def list_good_choices(
-    page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
-    good_id: Optional[int] = Query(default=None),
+        page: int = Query(1, ge=1),
+        page_size: int = Query(20, ge=1, le=100),
+        good_id: Optional[int] = Query(default=None),
 ):
     search = Q()
     if good_id:
@@ -439,8 +488,8 @@ async def list_good_choices(
 async def get_choices_by_good(good_id: int = Query(..., ge=1)):
     query = (
         GoodChoice.filter(good_id=good_id)
-        .order_by("display_order", "id")
-        .only(
+            .order_by("display_order", "id")
+            .only(
             "id",
             "good_id",
             "name",
@@ -463,9 +512,9 @@ async def get_choices_by_good(good_id: int = Query(..., ge=1)):
     summary="根据商品ID分页获取评论（每页10条）",
 )
 async def get_comments_by_good(
-    token: Annotated[str, Depends(oauth2_scheme)],
-    good_id: int = Query(..., ge=1),
-    page: int = Query(1, ge=1),
+        token: Annotated[str, Depends(oauth2_scheme)],
+        good_id: int = Query(..., ge=1),
+        page: int = Query(1, ge=1),
 ):
     user_id = _extract_user_id_from_token(token)
     base_query = GoodComment.filter(good_id=good_id)
@@ -474,9 +523,9 @@ async def get_comments_by_good(
     offset = (page - 1) * COMMENT_PAGE_SIZE
     records = (
         await base_query.order_by("-created_at")
-        .offset(offset)
-        .limit(COMMENT_PAGE_SIZE)
-        .prefetch_related("user")
+            .offset(offset)
+            .limit(COMMENT_PAGE_SIZE)
+            .prefetch_related("user")
     )
     comment_ids = [comment.id for comment in records]
     liked_ids = await _get_liked_comment_ids(user_id, comment_ids)
@@ -495,19 +544,19 @@ async def get_comments_by_good(
     summary="获取全部评论（按点赞数排序）",
 )
 async def list_comments_by_likes(
-    token: Annotated[str, Depends(oauth2_scheme)],
-    page: int = Query(1, ge=1),
+        token: Annotated[str, Depends(oauth2_scheme)],
+        page: int = Query(1, ge=1),
 ):
     user_id = _extract_user_id_from_token(token)
-    base_query = GoodComment.all()
+    base_query = GoodComment.filter(parent_id=None)
     total = await base_query.count()
 
     offset = (page - 1) * COMMENT_PAGE_SIZE
     query = (
         base_query.order_by("-like_count", "-created_at")
-        .offset(offset)
-        .limit(COMMENT_PAGE_SIZE)
-        .prefetch_related("user", "good__publisher")
+            .offset(offset)
+            .limit(COMMENT_PAGE_SIZE)
+            .prefetch_related("user", "good__publisher")
     )
     records = await query
     comment_ids = [comment.id for comment in records]
@@ -522,6 +571,68 @@ async def list_comments_by_likes(
         page=page,
         pageSize=COMMENT_PAGE_SIZE,
         items=items,
+    )
+
+
+@good_comments.get(
+    "/{comment_id}",
+    response_model=GoodCommentDetailResponse,
+    summary="根据评论ID获取评论及其直接子评论",
+)
+async def get_comment_with_replies(
+        token: Annotated[str, Depends(oauth2_scheme)],
+        comment_id: int,
+        page: int = Query(1, ge=1),
+):
+    user_id = _extract_user_id_from_token(token)
+    comment = await (
+        GoodComment.filter(id=comment_id)
+            .prefetch_related("user", "good__publisher")
+            .first()
+    )
+    if not comment:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="评论不存在"
+        )
+
+    include_store = comment.parent_id is None
+    liked_ids = await _get_liked_comment_ids(user_id, [comment.id])
+    comment_info = _build_comment_infos(
+        [comment],
+        include_store_info=include_store,
+        liked_comment_ids=liked_ids,
+    )[0]
+
+    store_detail: Optional[StoreInfoDetail] = None
+    if include_store:
+        good_obj = getattr(comment, "good", None)
+        publisher = getattr(good_obj, "publisher", None) if good_obj else None
+        store_detail = await _build_store_detail(publisher)
+
+    reply_query = GoodComment.filter(parent_id=comment.id)
+    total_replies = await reply_query.count()
+    offset = (page - 1) * COMMENT_PAGE_SIZE
+    reply_records = (
+        await reply_query.order_by("-created_at")
+            .offset(offset)
+            .limit(COMMENT_PAGE_SIZE)
+            .prefetch_related("user")
+    )
+    reply_ids = [reply.id for reply in reply_records]
+    reply_liked_ids = await _get_liked_comment_ids(user_id, reply_ids)
+    reply_items = _build_comment_infos(
+        reply_records, liked_comment_ids=reply_liked_ids
+    )
+    replies = GoodCommentListResponse(
+        total=total_replies,
+        page=page,
+        pageSize=COMMENT_PAGE_SIZE,
+        items=reply_items,
+    )
+    return GoodCommentDetailResponse(
+        comment=comment_info,
+        storeInfo=store_detail,
+        replies=replies,
     )
 
 
@@ -559,8 +670,8 @@ async def delete_good_choice(choice_id: int):
     "/", response_model=GoodCommentOut, status_code=status.HTTP_201_CREATED
 )
 async def create_good_comment(
-    payload: GoodCommentCreate,
-    token: Annotated[str, Depends(oauth2_scheme)],
+        payload: GoodCommentCreate,
+        token: Annotated[str, Depends(oauth2_scheme)],
 ):
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -592,8 +703,8 @@ async def create_good_comment_like(payload: GoodCommentLikeCreate):
 
 @good_comment_likes.get("/check")
 async def check_good_comment_like(
-    comment_id: int = Query(..., ge=1),
-    user_id: int = Query(..., ge=1),
+        comment_id: int = Query(..., ge=1),
+        user_id: int = Query(..., ge=1),
 ):
     exists = await GoodCommentLike.filter(
         comment_id=comment_id,

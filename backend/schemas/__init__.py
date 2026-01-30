@@ -36,6 +36,7 @@ from .shop import (
     GoodCommentLikeCreate,
     GoodCommentLikeUpdate,
 )
+from .buy_or_cart import CartCreate, CartUpdate
 
 __all__ = [
     "UserCreate",
@@ -72,4 +73,6 @@ __all__ = [
     "GoodCommentUpdate",
     "GoodCommentLikeCreate",
     "GoodCommentLikeUpdate",
+    "CartCreate",
+    "CartUpdate",
 ]

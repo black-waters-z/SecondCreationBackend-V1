@@ -6,13 +6,15 @@
 from .mysql import *
 from .shop import *
 from .test import *
+from .buy_or_cart import *
+from .collection import *
 # 导出所有模型
 __all__ = [
     'User', 'UserProfile', 'Tag', 'TagRelation', 'Article',
     'UserViewHistory', 'UserFavorite', 'UserLike', 'Reward',
     'ArticleRewardRanking', 'UserInterest', 'ArticleRecommendation',
-    'ArticleComment',
-    'Good', 'GoodChoice', 'GoodComment', 'GoodCommentLike',
+    'ArticleComment', 'Collection',
+    'Good', 'GoodChoice', 'GoodComment', 'GoodCommentLike', "Order", "Cart"
 ]
 """
 数据库迁移命令:

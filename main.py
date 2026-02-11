@@ -3,6 +3,8 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 import uvicorn
 from tortoise.contrib.fastapi import register_tortoise
+
+import settings
 from settings import TORTOISE_CONFIG
 from backend.api.v1.endpoints \
     import *
@@ -69,9 +71,10 @@ app.include_router(good_comments, tags=["商品评论接口"])
 app.include_router(good_comment_likes, tags=["商品评论点赞接口"])
 app.include_router(cart, tags=["购物车接口"])
 app.include_router(collection, tags=["合集接口"])
+app.include_router(article_data, tags=["文章数据接口"])
 
 if __name__ == '__main__':
     # 宿舍
-    uvicorn.run("main:app", port=8080, reload=True, log_level=True, host="localhost")
+    # uvicorn.run("main:app", port=8080, reload=True, log_level=True, host="localhost")
     # 教室
-    # uvicorn.run("main:app",port=8080, reload=True, log_level=True,host="10.81.24.42")
+    uvicorn.run("main:app",port=8080, reload=True, log_level=True,host=settings.BASE_HOST)

@@ -13,7 +13,7 @@ __all__ = [
     'User', 'UserProfile', 'Tag', 'TagRelation', 'Article',
     'UserViewHistory', 'UserFavorite', 'UserLike', 'Reward',
     'ArticleRewardRanking', 'UserInterest', 'ArticleRecommendation',
-    'ArticleComment', 'Collection',
+    'ArticleComment', 'ArticleCommentLike', 'Collection',
     'Good', 'GoodChoice', 'GoodComment', 'GoodCommentLike', "Order", "Cart"
 ]
 """

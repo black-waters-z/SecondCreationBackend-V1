@@ -1,5 +1,5 @@
 from datetime import timedelta
-from typing import List, Optional
+from typing import List, Optional, Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.security import OAuth2PasswordRequestForm
@@ -8,12 +8,13 @@ from tortoise.contrib.pydantic import pydantic_model_creator
 from tortoise.exceptions import DoesNotExist
 from tortoise.expressions import Q
 
+from backend.api.v1.endpoints.article import _extract_user_id_from_token
 from backend.config import ACCESS_TOKEN_EXPIRE_MINUTES
 from backend.core import rt
 from backend.controller import user_controller
 from backend.models import User
 from backend.schemas import UserCreate, UserUpdate
-from backend.security.password_security import create_access_token, verify_password,get_password_hash
+from backend.security.password_security import create_access_token, verify_password, get_password_hash, oauth2_scheme
 
 user = APIRouter(prefix="/users", tags=["用户管理接口"])
 
@@ -29,6 +30,13 @@ class LoginResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     expires_in: int
+
+
+@user.get("/me", response_model=UserOut,description="获取当前用户信息")
+async def get_me(token: Annotated[str, Depends(oauth2_scheme)]):
+    user_id = _extract_user_id_from_token(token)
+    userInfo = await User.get(id=user_id)
+    return await UserOut.from_tortoise_orm(userInfo)
 
 
 @user.post("/", response_model=UserOut, status_code=status.HTTP_201_CREATED)

@@ -1,16 +1,17 @@
 from datetime import datetime, timedelta
 from decimal import Decimal
-from typing import Annotated, List, Optional, Tuple
+from typing import Annotated, Dict, List, Optional, Tuple
+from backend.sc_utils import _parse_image_url
 from settings import APP_BASE_URL
 import jwt
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from jwt import InvalidTokenError
 from pydantic import BaseModel, Field
-from tortoise import fields
+from tortoise.functions import Count
 
 from backend.config import ALGORITHM, SECRET_KEY
 from backend.controller import article_controller
-from backend.models import Article, Collection, UserFavorite, UserLike, UserViewHistory, User
+from backend.models import Article, ArticleComment, Collection, UserFavorite, UserLike, UserViewHistory, User
 from backend.schemas import ArticleCreate, ArticleUpdate
 from backend.security.password_security import oauth2_scheme
 
@@ -27,12 +28,17 @@ class TagOut(BaseModel):
         from_attributes = True  # 使其支持从 ORM 对象转换
 
 
+class UserInfo(BaseModel):
+    id: int
+    username: str
+    avatar_url: str
+
+
 # ArticleOut 模型，用于表示文章信息
 class ArticleOut(BaseModel):
     id: int
     title: str
     subtitle: Optional[str] = None
-    author_id: int
     content: str
     image_urls: Optional[List[str]] = None
     view_count: int
@@ -51,10 +57,8 @@ class ArticleOut(BaseModel):
         from_attributes = True  # 使其支持从 ORM 对象转换
 
 
-class UserInfo(BaseModel):
-    id: int
-    name: str
-    avatar: str
+class ArticleOutWithUserInfo(ArticleOut):
+    author: UserInfo
 
 
 class Pr_Nx_ArticleOut(BaseModel):
@@ -78,6 +82,23 @@ class ArticlePageOut(BaseModel):
 class ArticleListResponse(BaseModel):
     total: int
     items: List[ArticleOut]
+
+
+class ArticleSimpleStat(BaseModel):
+    id: int
+    title: str
+    like_count: int
+    favorite_count: int
+    comment_count: int
+    content: Optional[str] = None
+    image_urls: Optional[List[str]] = None
+
+
+class ArticleSimpleStatListResponse(BaseModel):
+    total: int
+    page: int
+    page_size: int
+    items: List[ArticleSimpleStat]
 
 
 class ArticleHistoryRecordIn(BaseModel):
@@ -114,6 +135,72 @@ def _build_user_info(user: Optional[User]) -> UserInfo:
     )
 
 
+@article.get(
+    "/mine/statistics",
+    response_model=ArticleSimpleStatListResponse,
+    summary="分页获取当前作者所有文章的基础统计",
+)
+async def list_my_article_statistics(
+        token: Annotated[str, Depends(oauth2_scheme)],
+        page: int = Query(1, ge=1),
+        page_size: int = Query(10, ge=1, le=100),
+        get_content: bool = Query(False),
+) -> ArticleSimpleStatListResponse:
+    user_id = _extract_user_id_from_token(token)
+    query = Article.filter(author_id=user_id)
+    total = await query.count()
+    if total == 0:
+        return ArticleSimpleStatListResponse(
+            total=0,
+            page=page,
+            page_size=page_size,
+            items=[],
+        )
+
+    offset = (page - 1) * page_size
+    selected_fields = ["id", "title", "like_count", "favorite_count"]
+    if get_content:
+        selected_fields.extend(["content", "image_urls"])
+
+    articles = await (
+        query.order_by("-created_at")
+            .offset(offset)
+            .limit(page_size)
+            .only(*selected_fields)
+    )
+
+    article_ids = [article.id for article in articles]
+    comment_counts: Dict[int, int] = {}
+    if article_ids:
+        comment_stat_rows = (
+            await ArticleComment.filter(article_id__in=article_ids)
+                .group_by("article_id")
+                .annotate(comment_count=Count("id"))
+                .values("article_id", "comment_count")
+        )
+        for row in comment_stat_rows:
+            comment_counts[row["article_id"]] = row["comment_count"]
+
+    return ArticleSimpleStatListResponse(
+        total=total,
+        page=page,
+        page_size=page_size,
+        items=[
+            ArticleSimpleStat(
+                id=article.id,
+                title=article.title,
+                like_count=article.like_count,
+                favorite_count=article.favorite_count,
+                comment_count=comment_counts.get(article.id, 0),
+                content=article.content[:200] if (get_content and getattr(article, "content", None)) else None,
+                image_urls=article.image_urls if (get_content and getattr(article, "image_urls", None)) else None,
+
+            )
+            for article in articles
+        ],
+    )
+
+
 @article.get("/page/{page}")
 async def list_articles(page: int):
     total, articles = await article_controller.list_items(page, 10)
@@ -147,7 +234,7 @@ async def list_favorite_articles(
             continue
         article_obj.content = article_obj.content[:100]
         article_obj.has_favorited = True
-        article_obj.image_urls=_parse_image_url(article_obj)
+        article_obj.image_urls = _parse_image_url(article_obj)
         articles.append(article_obj)
     return articles
 
@@ -158,18 +245,18 @@ async def list_favorite_articles(
     summary="分页查询当前用户点赞",
 )
 async def list_liked_articles(
-    token: Annotated[str, Depends(oauth2_scheme)],
-    page: int = Query(1, ge=1),
+        token: Annotated[str, Depends(oauth2_scheme)],
+        page: int = Query(1, ge=1),
 ) -> List[ArticleOut]:
     user_id = _extract_user_id_from_token(token)
     page_size = 15
     offset = (page - 1) * page_size
     likes = await (
         UserLike.filter(user_id=user_id)
-        .order_by("-liked_at")
-        .offset(offset)
-        .limit(page_size)
-        .prefetch_related("article__tags")
+            .order_by("-liked_at")
+            .offset(offset)
+            .limit(page_size)
+            .prefetch_related("article__tags")
     )
     article_ids = {like.article_id for like in likes if getattr(like, "article_id", None)}
     favorited_ids: set[int] = set()
@@ -188,7 +275,7 @@ async def list_liked_articles(
         article_obj.content = article_obj.content[:100]
         article_obj.has_liked = True
         article_obj.has_favorited = article_obj.id in favorited_ids
-        article_obj.image_urls=_parse_image_url(article_obj)
+        article_obj.image_urls = _parse_image_url(article_obj)
         articles.append(article_obj)
     return articles
 
@@ -200,10 +287,10 @@ async def delete_or_add_favorite_article(token: Annotated[str, Depends(oauth2_sc
         favorite_exist = await UserFavorite.filter(user_id=user_id, article_id=article_id).exists()
         if favorite_exist:
             await UserFavorite.filter(user_id=user_id, article_id=article_id).delete()
-            message="删除成功"
+            message = "删除成功"
         else:
             await UserFavorite.create(user_id=user_id, article_id=article_id)
-            message="添加成功"
+            message = "添加成功"
         return {"message": message}
     except Exception as e:
         raise HTTPException(
@@ -214,8 +301,8 @@ async def delete_or_add_favorite_article(token: Annotated[str, Depends(oauth2_sc
 
 @article.post("/like/{article_id}")
 async def delete_or_add_like_article(
-    token: Annotated[str, Depends(oauth2_scheme)],
-    article_id: int,
+        token: Annotated[str, Depends(oauth2_scheme)],
+        article_id: int,
 ):
     try:
         user_id = _extract_user_id_from_token(token)
@@ -294,7 +381,7 @@ async def create_view_history(
     return await ArticleOut.from_tortoise_orm(article_obj)
 
 
-@article.get("/recommendations", response_model=List[ArticleOut])
+@article.get("/recommendations", response_model=List[ArticleOutWithUserInfo])
 async def get_recommended_articles(token: Annotated[str, Depends(oauth2_scheme)],
                                    limit: int = Query(default=15, ge=1, le=50, description="返回的推荐文章数量"),
                                    ):
@@ -304,7 +391,7 @@ async def get_recommended_articles(token: Annotated[str, Depends(oauth2_scheme)]
             .order_by("-view_count", "-like_count", "-favorite_count", "-reward_amount")
             .limit(limit)
     )
-    articles = await query.prefetch_related("tags")
+    articles = await query.prefetch_related("tags", "author")
     await UserLike.filter()
     serialized_articles: List[ArticleOut] = []
     favorited_list = await UserFavorite.filter(user_id=user_id).all().values_list("article_id", flat=True)
@@ -313,8 +400,10 @@ async def get_recommended_articles(token: Annotated[str, Depends(oauth2_scheme)]
             article_obj.content = article_obj.content[:100]
         favorited = article_obj.id in favorited_list
         article_obj.has_favorited = favorited
-        article_obj.image_urls=_parse_image_url(article_obj)
+        article_obj.image_urls = _parse_image_url(article_obj)
+        article_obj.author = article_obj.author
         serialized_articles.append(article_obj)
+
     return serialized_articles
 
 
@@ -413,6 +502,7 @@ async def get_filtered_articles(
         if article_obj.content:
             article_obj.content = article_obj.content[:100]
         article_obj.has_favorited = article_obj.id in favorited_ids
+        article_obj.image_urls = _parse_image_url(article_obj)
         items.append(article_obj)
     count = len(items)
     return ArticleListResponse(total=count, items=items)
@@ -440,57 +530,70 @@ async def list_articles(tag_id: str = Query(default=None)):
 
     query = Article.filter(tags__id__in=tag_ids)
     articles = await query.prefetch_related("tags")
-
+    results = []
+    for article_obj in articles:
+        article_obj.image_urls = _parse_image_url(article_obj)
+        results.append(article_obj)
     # 确保获取实际的 tags 数据
-    return [article for article in articles]
+    return results
 
 
 @article.post("", response_model=ArticleOut)
 async def create_article(
         article_in: ArticleCreate,
         token: Annotated[str, Depends(oauth2_scheme)],
+        article_id: Optional[int] = Query(default=None, ge=1),
 ):
+    """
+    article_id: 更新的文章id，若不提供，则是直接插入文章
+    """
     user_id = _extract_user_id_from_token(token)
     try:
-        article_obj = await article_controller.create(article_in)
+        if article_id is not None:
+            existing = await Article.filter(id=article_id).first()
+            if not existing:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="要更新的文章不存在",
+                )
+            if existing.author_id != user_id:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="无权更新该文章",
+                )
+            update_payload = ArticleUpdate(
+                author_id=user_id,
+                **article_in.model_dump()
+            )
+            article_obj = await article_controller.update_item(article_id, update_payload)
+        else:
+            payload = ArticleUpdate(
+                author_id=user_id,
+                **article_in.model_dump()
+            )
+            article_obj = await article_controller.create(payload)
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(exc),
         )
+
     if article_in.collection:
         collection_data = article_in.collection.model_dump(exclude_none=True)
         name_value = collection_data.get("name")
-        existing = (
+        existing_collection = (
             await Collection.filter(author_id=user_id, name=name_value or "")
                 .first()
             if name_value
             else None
         )
-        if existing:
-            article_obj.collection_id = existing.id
+        if existing_collection:
+            article_obj.collection_id = existing_collection.id
         else:
-            new_collection = await Collection.create(
-                author_id=user_id,
-                name=name_value or "",
-                description=collection_data.get("description"),
-                image_url=collection_data.get("image_url"),
-            )
-            article_obj.collection_id = new_collection.id
+            article_obj.collection_id = None
         await article_obj.save()
     return article_obj
 
-
-def _parse_image_url(article_obj:dict):
-    images = []
-    if hasattr(article_obj, 'image_urls') and article_obj.image_urls:
-        for image_url in article_obj.image_urls:
-            if not image_url.startswith("http"):
-                if image_url.endswith(".png") or image_url.endswith(".jpg") or image_url.endswith(".jpeg"):
-                    images.append(APP_BASE_URL + '/static/upload_IMG/' + image_url)
-                else:
-                    images.append(APP_BASE_URL + '/static/upload_Video/' + image_url)
-    return images
 
 # 查询整个文章的接口
 @article.get(
@@ -539,7 +642,6 @@ async def get_article_with_status(
         id=article_obj.id,
         title=article_obj.title,
         subtitle=article_obj.subtitle,
-        author_id=article_obj.author_id,
         content=article_obj.content,
         image_urls=images,
         view_count=article_obj.view_count,
@@ -560,8 +662,8 @@ async def get_article_with_status(
     if author:
         author_info = UserInfo(
             id=author.id,
-            name=author.username,
-            avatar=author.avatar_url,
+            username=author.username,
+            avatar_url=author.avatar_url,
         )
     else:
         author_info = UserInfo(id=0, name="", avatar="")

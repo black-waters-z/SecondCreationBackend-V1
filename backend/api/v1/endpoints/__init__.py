@@ -7,3 +7,4 @@ from .shop import goods, good_choices, good_comments, good_comment_likes
 from .buy_or_cart import cart
 from .collection import collection
 from .comment import comment
+from .article_data import article_data

@@ -224,3 +224,23 @@ class ArticleComment(Model):
 
     class Meta:
         table = "article_comments"
+
+
+class ArticleCommentLike(Model):
+    """文章评论点赞"""
+    id = fields.IntField(pk=True)
+    comment = fields.ForeignKeyField(
+        "models.ArticleComment",
+        related_name="likes",
+        on_delete=CASCADE,
+    )
+    user = fields.ForeignKeyField(
+        "models.User",
+        related_name="comment_likes",
+        on_delete=CASCADE,
+    )
+    liked_at = fields.DatetimeField(auto_now_add=True)
+
+    class Meta:
+        table = "article_comment_likes"
+        unique_together = ("comment", "user")

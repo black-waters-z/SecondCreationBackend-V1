@@ -28,16 +28,20 @@ class CollectionIn(BaseModel):
     name: str
 
 
+class CollectionInWithArticle(BaseModel):
+    id:int
+    name:str
+
+
 class ArticleCreate(BaseModel):
     title: str
-    author_id: int
     content: str
     subtitle: Optional[str] = None
     image_urls: Optional[List[str]] = None
     status: Optional[str] = "published"
     published_at: Optional[datetime] = None
     tag_ids: Optional[List[int]] = None
-    collection: Optional[CollectionCreate] = None
+    collection: Optional[CollectionInWithArticle] = None
 
     @field_validator("image_urls")
     @classmethod

@@ -24,11 +24,23 @@ class CollectionArticleOut(BaseModel):
 
 
 UserOut = pydantic_model_creator(User, name="UserOut", exclude=("password_hash",))
+CollectionCreate = pydantic_model_creator(Collection, name="CollectionCreate",
+                                          exclude=("id", "author", "updated_at", "created_at"))
 
 
 class CollectionArticleWithUserOut(BaseModel):
     user: UserOut
     items: List[CollectionArticleOut]
+
+
+@collection.post("", summary="创建合集")
+async def post_collection(token: Annotated[str, Depends(oauth2_scheme)],
+                          collectionIn: CollectionCreate):
+    user_id = _extract_user_id_from_token(token)
+    result = await Collection.create(**collectionIn.dict(), author_id=user_id)
+    return {"message": "创建成功",
+            "id": result.id
+            }
 
 
 @collection.post("/{collection_id}/subscribe", status_code=status.HTTP_204_NO_CONTENT)
@@ -89,6 +101,6 @@ async def list_collection_articles(token: Annotated[str, Depends(oauth2_scheme)]
         )
         result.append(article_out)
     return {
-        "items":result,
+        "items": result,
         "user": UserOut.from_orm(collection.author)
     }

@@ -124,6 +124,7 @@ class UserFavorite(Model):
     user = fields.ForeignKeyField("models.User", related_name="favorites")
     article = fields.ForeignKeyField("models.Article", related_name="favorited_by")
     favorited_at = fields.DatetimeField(auto_now_add=True)
+    has_viewed = fields.BooleanField(default=False)
 
     class Meta:
         table = "user_favorites"
@@ -136,6 +137,7 @@ class UserLike(Model):
     user = fields.ForeignKeyField("models.User", related_name="likes")
     article = fields.ForeignKeyField("models.Article", related_name="liked_by")
     liked_at = fields.DatetimeField(auto_now_add=True)
+    has_viewed = fields.BooleanField(default=False)
 
     class Meta:
         table = "user_likes"
@@ -185,6 +187,26 @@ class UserInterest(Model):
         unique_together = ("user", "tag")
 
 
+class UserAttention(Model):
+    """用户关注记录"""
+    id = fields.IntField(pk=True)
+    follower = fields.ForeignKeyField(
+        "models.User",
+        related_name="attentions",
+        on_delete=CASCADE,
+    )
+    following = fields.ForeignKeyField(
+        "models.User",
+        related_name="followers",
+        on_delete=CASCADE,
+    )
+    created_at = fields.DatetimeField(auto_now_add=True)
+
+    class Meta:
+        table = "user_attentions"
+        unique_together = ("follower", "following")
+
+
 class ArticleRecommendation(Model):
     """文章推荐记录"""
     id = fields.IntField(pk=True)
@@ -221,6 +243,7 @@ class ArticleComment(Model):
     updated_at = fields.DatetimeField(auto_now=True)
     is_deleted = fields.BooleanField(default=False)
     deleted_at = fields.DatetimeField(null=True)
+    has_viewed = fields.BooleanField(default=False)
 
     class Meta:
         table = "article_comments"

@@ -72,6 +72,7 @@ app.include_router(good_comment_likes, tags=["商品评论点赞接口"])
 app.include_router(cart, tags=["购物车接口"])
 app.include_router(collection, tags=["合集接口"])
 app.include_router(article_data, tags=["文章数据接口"])
+app.include_router(contact, tags=["所有互动接口"])
 
 if __name__ == '__main__':
     # 宿舍

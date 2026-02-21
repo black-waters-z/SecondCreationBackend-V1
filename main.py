@@ -2,17 +2,51 @@ from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 import uvicorn
+from starlette.responses import JSONResponse
 from tortoise.contrib.fastapi import register_tortoise
 
 import settings
+from backend.sc_utils import _parse_image_url
+from backend.sc_utils.parse_url import _parse_list_urls
 from settings import TORTOISE_CONFIG
 from backend.api.v1.endpoints \
     import *
 from fastapi.middleware.cors import CORSMiddleware
-import os
+from fastapi import FastAPI, Request, Response
+import json
 from pathlib import Path
 
 app = FastAPI()
+
+#
+# @app.middleware("http")
+# async def add_prefix_to_urls(request: Request, call_next):
+#     response: Response = await call_next(request)
+#
+#     # 只处理 JSON 响应
+#     if isinstance(response, JSONResponse):  # 检查是否为 JSON 响应
+#         try:
+#             body = response.body  # 直接获取 body（JSONResponse 支持）
+#             data = json.loads(body.decode())
+#
+#             # 递归处理所有 image_urls 字段
+#             def process_urls(obj):
+#                 if isinstance(obj, dict):
+#                     for key, value in obj.items():
+#                         if key == "image_urls" and isinstance(value, list):
+#                             obj[key] = _parse_list_urls(value)
+#                         elif isinstance(value, (dict, list)):
+#                             process_urls(value)
+#                 elif isinstance(obj, list):
+#                     for item in obj:
+#                         process_urls(item)
+#
+#             process_urls(data)
+#             response.body = json.dumps(data).encode()
+#         except Exception:
+#             pass  # 忽略非 JSON 响应或解析错误
+#
+#     return response
 
 register_tortoise(app,
                   config=TORTOISE_CONFIG,
@@ -73,6 +107,7 @@ app.include_router(cart, tags=["购物车接口"])
 app.include_router(collection, tags=["合集接口"])
 app.include_router(article_data, tags=["文章数据接口"])
 app.include_router(contact, tags=["所有互动接口"])
+app.include_router(draft, tags=["草稿接口"])
 
 if __name__ == '__main__':
     # 宿舍

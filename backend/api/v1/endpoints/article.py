@@ -1,6 +1,10 @@
 from datetime import datetime, timedelta
 from decimal import Decimal
+from enum import Enum
 from typing import Annotated, Dict, List, Optional, Tuple
+
+from tortoise.expressions import F, Q
+
 from backend.sc_utils import _parse_image_url
 from settings import APP_BASE_URL
 import jwt
@@ -11,7 +15,8 @@ from tortoise.functions import Count
 
 from backend.config import ALGORITHM, SECRET_KEY
 from backend.controller import article_controller
-from backend.models import Article, ArticleComment, Collection, UserFavorite, UserLike, UserViewHistory, User
+from backend.models import Article, ArticleComment, Collection, UserFavorite, UserLike, UserViewHistory, User, \
+    UserAttention
 from backend.schemas import ArticleCreate, ArticleUpdate
 from backend.security.password_security import oauth2_scheme
 
@@ -32,6 +37,7 @@ class UserInfo(BaseModel):
     id: int
     username: str
     avatar_url: str
+    has_been_followed: Optional[bool] = False
 
 
 # ArticleOut 模型，用于表示文章信息
@@ -138,16 +144,18 @@ def _build_user_info(user: Optional[User]) -> UserInfo:
 @article.get(
     "/mine/statistics",
     response_model=ArticleSimpleStatListResponse,
-    summary="分页获取当前作者所有文章的基础统计",
+    summary="分页获取作者文章的基础统计（支持自己的 token 或指定用户 ID）",
 )
 async def list_my_article_statistics(
         token: Annotated[str, Depends(oauth2_scheme)],
         page: int = Query(1, ge=1),
         page_size: int = Query(10, ge=1, le=100),
         get_content: bool = Query(False),
+        user_id: Optional[int] = Query(None, ge=1, description="可选的作者用户ID，不传则使用 token 对应的用户"),
 ) -> ArticleSimpleStatListResponse:
-    user_id = _extract_user_id_from_token(token)
-    query = Article.filter(author_id=user_id)
+    target_user_id = user_id or _extract_user_id_from_token(token)
+
+    query = Article.filter(author_id=target_user_id)
     total = await query.count()
     if total == 0:
         return ArticleSimpleStatListResponse(
@@ -194,7 +202,6 @@ async def list_my_article_statistics(
                 comment_count=comment_counts.get(article.id, 0),
                 content=article.content[:200] if (get_content and getattr(article, "content", None)) else None,
                 image_urls=article.image_urls if (get_content and getattr(article, "image_urls", None)) else None,
-
             )
             for article in articles
         ],
@@ -508,8 +515,11 @@ async def get_filtered_articles(
     return ArticleListResponse(total=count, items=items)
 
 
-@article.get("/from_tag_get", response_model=List[ArticleOut])
-async def list_articles(tag_id: str = Query(default=None)):
+@article.get("/from_tag_get", response_model=List[ArticleOutWithUserInfo])
+async def list_articles(page: int = Query(default=1),
+                        order_by: str = Query(default="-total_score"),
+                        peroid: str = Query(default="week"),
+                        tag_id: str = Query(default=None)):
     if not tag_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -528,12 +538,93 @@ async def list_articles(tag_id: str = Query(default=None)):
             detail="请至少提供一个tag_id",
         )
 
-    query = Article.filter(tags__id__in=tag_ids)
-    articles = await query.prefetch_related("tags")
+    query = Article.filter(tags__id__in=tag_ids).annotate(
+        total_score=F("like_count") + F("favorite_count")).order_by(
+        order_by).offset(page - 1).limit(10)
+    articles = await query.prefetch_related("tags", "author")
+    results = []
+    for article_obj in articles:
+        result = []
+        article_obj.image_urls = _parse_image_url(article_obj)
+        user = {
+            'id': article_obj.author_id,
+            'username': article_obj.author.username,
+            'avatar_url': article_obj.author.avatar_url
+        }
+        result = ArticleOut.model_validate(article_obj).model_dump()
+        result['author'] = user
+        results.append(result)
+    # 确保获取实际的 tags 数据
+    return results
+
+
+class PeroidEnum(str, Enum):
+    all = "all"
+    week = "week"
+    month = "month"
+    year = "year"
+    newest = "newest"
+    recommend = "recommend"
+
+
+class SearchArticleKeywords(BaseModel):
+    keyword: Optional[str] = None
+    must_have_ids: Optional[List[int]] = None
+    tag_ids: Optional[List[int]] = None
+    order_by: Optional[str] = '-total_score'
+    # week or month or year or newest
+    peroid: Optional[PeroidEnum] = 'all'
+    # [start_time, end_time]
+    time_range: Optional[List[datetime]] = None
+    page: int = 1
+    per_page: int = 10
+
+
+@article.post("/filter_and_search_articles", response_model=List[ArticleOutWithUserInfo])
+async def search_articles(
+        search_keys: SearchArticleKeywords,
+):
+    query = Q()
+    if search_keys.tag_ids:
+        # for tag in search_keys.tag_ids:
+        #     query = query & Q(tags__id=tag)
+        query = query & Q(tags__id__in=search_keys.tag_ids)
+    if search_keys.keyword:
+        query = query & Q(title__icontains=search_keys.keyword)
+    if search_keys.time_range:
+        query = query & Q(created_at__range=search_keys.time_range)
+    else:
+        if search_keys.peroid == PeroidEnum.week:
+            query = query & Q(created_at__gte=datetime.now() - timedelta(days=7))
+        if search_keys.peroid == PeroidEnum.month:
+            query = query & Q(created_at__gte=datetime.now() - timedelta(days=30))
+        if search_keys.peroid == PeroidEnum.year:
+            query = query & Q(created_at__gte=datetime.now() - timedelta(days=365))
+
+    query = Article.filter(query)
+
+    query = query.annotate(
+        total_score=F("like_count") + F("favorite_count")).order_by(
+        search_keys.order_by).offset(search_keys.page - 1).limit(search_keys.per_page)
+
+    query = query.prefetch_related("tags", "author")
+
+    # if search_keys.must_have_ids:
+    #     query = query.filter(tags__id=search_keys.must_have_ids[0])
+    articles = await query
+
     results = []
     for article_obj in articles:
         article_obj.image_urls = _parse_image_url(article_obj)
-        results.append(article_obj)
+        user = {
+            'id': article_obj.author_id,
+            'username': article_obj.author.username,
+            'avatar_url': article_obj.author.avatar_url
+        }
+        result = ArticleOut.model_validate(article_obj).model_dump()
+        result['author'] = user
+        results.append(result)
+
     # 确保获取实际的 tags 数据
     return results
 
@@ -660,10 +751,12 @@ async def get_article_with_status(
     # 获取作者信息
     author = getattr(article_obj, "author", None)
     if author:
+        has_been_followed = await UserAttention.filter(following_id=author.id, follower_id=user_id).exists()
         author_info = UserInfo(
             id=author.id,
             username=author.username,
             avatar_url=author.avatar_url,
+            has_been_followed=has_been_followed
         )
     else:
         author_info = UserInfo(id=0, name="", avatar="")

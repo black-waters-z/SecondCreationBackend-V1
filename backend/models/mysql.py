@@ -221,6 +221,20 @@ class ArticleRecommendation(Model):
         table = "article_recommendations"
 
 
+class Draft(Model):
+    """文章草稿"""
+    id = fields.IntField(pk=True)
+    title = fields.CharField(max_length=200)
+    subtitle = fields.CharField(max_length=500, null=True)
+    author = fields.ForeignKeyField("models.User", related_name="drafts")
+    content = fields.TextField()
+    image_urls = fields.JSONField(null=True)
+    created_at = fields.DatetimeField(auto_now_add=True)
+
+    class Meta:
+        table = "drafts"
+
+
 class ArticleComment(Model):
     """文章评论（支持多级评论）"""
     id = fields.IntField(pk=True)

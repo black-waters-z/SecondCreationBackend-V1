@@ -1,8 +1,8 @@
 from datetime import datetime
 from typing import Annotated, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from fastapi import APIRouter, Depends
+from pydantic import BaseModel
 from tortoise.expressions import F
 
 from backend.api.v1.endpoints.article import _extract_user_id_from_token

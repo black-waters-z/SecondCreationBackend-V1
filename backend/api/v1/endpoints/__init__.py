@@ -9,3 +9,4 @@ from .collection import collection
 from .comment import comment
 from .article_data import article_data
 from .contact import contact
+from .draft import draft

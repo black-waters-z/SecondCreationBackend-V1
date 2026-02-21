@@ -14,7 +14,8 @@ __all__ = [
     'UserViewHistory', 'UserFavorite', 'UserLike', 'Reward',
     'ArticleRewardRanking', 'UserInterest', 'ArticleRecommendation',
     'ArticleComment', 'ArticleCommentLike', 'Collection',
-    'Good', 'GoodChoice', 'GoodComment', 'GoodCommentLike', "Order", "Cart"
+    'Good', 'GoodChoice', 'GoodComment', 'GoodCommentLike', "Order", "Cart",
+    'Draft'
 ]
 """
 数据库迁移命令:

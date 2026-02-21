@@ -1,18 +1,12 @@
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Annotated, Dict, List, Optional, Tuple
-from pypika import functions as fn
-import jwt
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from jwt import InvalidTokenError
 from pydantic import BaseModel, Field
-from pypika_tortoise.functions import Extract
 
 from tortoise.expressions import F, RawSQL
 from tortoise.functions import Count
-
-from backend.config import ALGORITHM, SECRET_KEY
-from backend.controller import article_controller
 from backend.models import (
     Article,
     Reward,
@@ -60,7 +54,7 @@ async def _get_article_comments_data(article_id: int, group_by: str, start_date:
         date=RawSQL("DATE(created_at)"),  # 提取日期部分（按天分组）
         week=RawSQL("YEARWEEK(created_at, 1)"),
         month=RawSQL("DATE_FORMAT(created_at, '%%Y-%%m')")
-    ).group_by(group_by).annotate(count=Count("id")).values("date", "count","week","month")
+    ).group_by(group_by).annotate(count=Count("id")).values("date", "count", "week", "month")
 
     return [StatsBucket(label=str(item[group_by]), count=item["count"]) for item in comments]
 
@@ -75,7 +69,7 @@ async def _get_article_likes_data(article_id: int, group_by: str, start_date: da
         date=RawSQL("DATE(liked_at)"),  # 提取日期部分（按天分组）
         week=RawSQL("YEARWEEK(liked_at, 1)"),
         month=RawSQL("DATE_FORMAT(liked_at, '%%Y-%%m')")
-    ).group_by(group_by).annotate(count=Count("id")).values("date", "count","week","month")
+    ).group_by(group_by).annotate(count=Count("id")).values("date", "count", "week", "month")
 
     return [StatsBucket(label=str(item[group_by]), count=item["count"]) for item in likes]
 
@@ -90,15 +84,15 @@ async def _get_article_favorites_data(article_id: int, group_by: str, start_date
         date=RawSQL("DATE(favorited_at)"),  # 提取日期部分（按天分组）
         week=RawSQL("YEARWEEK(favorited_at, 1)"),
         month=RawSQL("DATE_FORMAT(favorited_at, '%%Y-%%m')")
-    ).group_by(group_by).annotate(count=Count("id")).values("date", "count","week","month")
+    ).group_by(group_by).annotate(count=Count("id")).values("date", "count", "week", "month")
 
     return [StatsBucket(label=str(item[group_by]), count=item["count"]) for item in favorites]
 
 
 search_time = {
-    "month": [datetime.utcnow() - timedelta(days=360), datetime.utcnow()],
-    "week": [datetime.utcnow() - timedelta(days=30), datetime.utcnow()],
-    "date": [datetime.utcnow() - timedelta(days=7), datetime.utcnow()]
+    "month": [datetime.utcnow() - timedelta(days=360), datetime.utcnow().replace(hour=23, minute=59, second=59, microsecond=999999)],
+    "week": [datetime.utcnow() - timedelta(days=30), datetime.utcnow().replace(hour=23, minute=59, second=59, microsecond=999999)],
+    "date": [datetime.utcnow() - timedelta(days=7), datetime.utcnow().replace(hour=23, minute=59, second=59, microsecond=999999)]
 }
 
 
@@ -132,32 +126,36 @@ def _fill_missing_buckets(data: List[StatsBucket], labels: List[str]) -> List[St
 
 
 @article_data.get("/stats_list")
-async def get_article_stats_list(page: int = Query(1), size: int = Query(10)):
-    total,records = await article_controller.list_items(page, size)
-    article_ids= [article.id for article in records]
-    results= []
-    for article_id in article_ids:
+async def get_article_stats_list(token: Annotated[str, Depends(oauth2_scheme)], page: int = Query(1),
+                                 size: int = Query(10)):
+    user_id = _extract_user_id_from_token(token)
+    records = await Article.filter(author_id=user_id).offset((page - 1) * size).limit(size).all()
+    articles = [{'article_id':article.id ,'article_name': article.title}  for article in records]
+    results = []
+    for article in articles:
         result = []
-        for group_by in ['date','week', 'month']:
+        for group_by in ['date', 'week', 'month']:
             start_time, end_time = search_time[group_by]
             bucket_labels = _generate_bucket_labels(group_by, start_time, end_time)
 
-            comments_group_by_data = await _get_article_comments_data(article_id, group_by,
+            comments_group_by_data = await _get_article_comments_data(article.get('article_id'), group_by,
                                                                       start_time,
                                                                       end_time)
-            favorites_group_by_data = await _get_article_favorites_data(article_id, group_by,
+            favorites_group_by_data = await _get_article_favorites_data(article.get('article_id'), group_by,
                                                                         start_time,
                                                                         end_time)
-            likes_group_by_data = await _get_article_likes_data(article_id, group_by,
+            likes_group_by_data = await _get_article_likes_data(article.get('article_id'), group_by,
                                                                 start_time,
                                                                 end_time)
             result.append({
+                **article,
                 group_by: {
                     "like": _fill_missing_buckets(likes_group_by_data, bucket_labels),
                     "favorite": _fill_missing_buckets(favorites_group_by_data, bucket_labels),
                     "comment": _fill_missing_buckets(comments_group_by_data, bucket_labels),
                 }
             })
+
         results.append(result)
 
     return results
@@ -173,3 +171,4 @@ async def record_article_view(article_id: int, token: Annotated[str, Depends(oau
     else:
         await UserViewHistory.create(user_id=_extract_user_id_from_token(token), article_id=article_id,
                                      viewed_at=datetime.utcnow())
+

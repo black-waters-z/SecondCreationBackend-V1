@@ -12,7 +12,7 @@ from backend.api.v1.endpoints.article import _extract_user_id_from_token
 from backend.config import ACCESS_TOKEN_EXPIRE_MINUTES
 from backend.core import rt
 from backend.controller import user_controller
-from backend.models import User
+from backend.models import User, UserAttention
 from backend.schemas import UserCreate, UserUpdate
 from backend.security.password_security import create_access_token, verify_password, get_password_hash, oauth2_scheme
 
@@ -32,11 +32,34 @@ class LoginResponse(BaseModel):
     expires_in: int
 
 
-@user.get("/me", response_model=UserOut,description="获取当前用户信息")
-async def get_me(token: Annotated[str, Depends(oauth2_scheme)]):
+class SimpleUser(BaseModel):
+    id: int
+    username: str
+    avatar_url: Optional[str] = None
+
+
+class UserAttentionListResponse(BaseModel):
+    total: int
+    page: int
+    page_size: int
+    items: List[SimpleUser]
+
+
+@user.get("/me", description="获取当前用户信息")
+async def get_me(token: Annotated[str, Depends(oauth2_scheme)], input_user_id: Optional[int] = None):
     user_id = _extract_user_id_from_token(token)
-    userInfo = await User.get(id=user_id)
-    return await UserOut.from_tortoise_orm(userInfo)
+    if input_user_id:
+        following = await UserAttention.filter(following_id=input_user_id, follower_id=user_id).exists()
+        userInfo = await User.get(id=input_user_id)
+    else:
+        following = await UserAttention.filter(following_id=user_id, follower_id=user_id).exists()
+        userInfo = await User.get(id=user_id)
+
+    user = (await UserOut.from_tortoise_orm(userInfo)).model_dump()
+    return {
+        **user,
+        'following': following,
+    }
 
 
 @user.post("/", response_model=UserOut, status_code=status.HTTP_201_CREATED)
@@ -47,9 +70,9 @@ async def create_user(user_in: UserCreate):
 
 @user.get("/", response_model=UserListResponse)
 async def list_users(
-    page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
-    keyword: Optional[str] = None,
+        page: int = Query(1, ge=1),
+        page_size: int = Query(20, ge=1, le=100),
+        keyword: Optional[str] = None,
 ):
     search = Q()
     if keyword:
@@ -97,6 +120,48 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends()):
         ) from exc
 
     return LoginResponse(access_token=access_token, expires_in=ttl_seconds)
+
+
+@user.get("/attentions", response_model=UserAttentionListResponse, description="获取当前用户关注的用户列表")
+async def list_user_attentions(
+        token: Annotated[str, Depends(oauth2_scheme)],
+        page: int = Query(1, ge=1),
+):
+    user_id = _extract_user_id_from_token(token)
+    page_size = 20
+    queryset = UserAttention.filter(follower_id=user_id).prefetch_related("following").order_by("-created_at")
+    total = await queryset.count()
+    records = await queryset.offset((page - 1) * page_size).limit(page_size)
+    items = [
+        SimpleUser(
+            id=attention.following.id,
+            username=attention.following.username,
+            avatar_url=attention.following.avatar_url,
+        )
+        for attention in records
+    ]
+    return UserAttentionListResponse(total=total, page=page, page_size=page_size, items=items)
+
+
+@user.post("/attentions")
+async def toggle_attention(token: Annotated[str, Depends(oauth2_scheme)],
+                           following_id: int):
+    user_id = _extract_user_id_from_token(token)
+    user_attention = UserAttention.filter(follower_id=user_id, following_id=following_id)
+    exist = await user_attention.exists()
+    if exist:
+        result = await user_attention.first()
+        await result.delete()
+        return {
+            'msg': '已取消关注',
+            'following_id': result.following_id
+        }
+    else:
+        result = await UserAttention.create(follower_id=user_id, following_id=following_id)
+        return {
+            'msg': '关注成功',
+            'following_id': result.following_id
+        }
 
 
 @user.get("/{user_id}", response_model=UserOut)

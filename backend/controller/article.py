@@ -48,9 +48,9 @@ class ArticleController(ApiController[Article, ArticleCreate, ArticleUpdate]):
         return await self._load_tags(article)
 
     async def update(
-        self,
-        id: int,
-        obj_in: ArticleUpdate | Dict[str, Any],
+            self,
+            id: int,
+            obj_in: ArticleUpdate | Dict[str, Any],
     ) -> Article:
         if isinstance(obj_in, dict):
             tags_supplied = "tag_ids" in obj_in
@@ -74,11 +74,11 @@ class ArticleController(ApiController[Article, ArticleCreate, ArticleUpdate]):
         return await self._load_tags(article)
 
     async def list_items(
-        self,
-        page: int,
-        page_size: int,
-        search=Q(),
-        order: Optional[List[str]] = None,
+            self,
+            page: int,
+            page_size: int,
+            search=Q(),
+            order: Optional[List[str]] = None,
     ):
         total, records = await super().list_items(page, page_size, search, order)
         await self._prefetch_tags(records)

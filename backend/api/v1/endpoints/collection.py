@@ -1,4 +1,4 @@
-from typing import Annotated, List
+from typing import Annotated, List, Optional
 
 from tortoise.contrib.pydantic import pydantic_model_creator
 
@@ -62,10 +62,14 @@ async def subscribe_collection(
 
 @collection.get("", summary="列举用户合集")
 async def list_collections(token: Annotated[str, Depends(oauth2_scheme)],
+                           input_user_id: Optional[int] = None,
                            page: int = Query(1, ge=1),
                            page_size: int = Query(10, ge=10, le=100)):
     # await Collection
-    user_id = _extract_user_id_from_token(token)
+    if input_user_id:
+        user_id = input_user_id
+    else:
+        user_id = _extract_user_id_from_token(token)
     user_collection = await Collection.filter(author_id=user_id) \
         .offset((page - 1) * page_size).limit(page_size) \
         .values("id", "name", "description")

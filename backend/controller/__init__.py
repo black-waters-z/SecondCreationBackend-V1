@@ -37,6 +37,7 @@ from .shop import (
     good_comment_like_controller,
 )
 from .buy_or_cart import CartController, cart_controller
+from .draft import DraftController,draft_controller
 
 __all__ = [
     "ApiController",
@@ -74,4 +75,6 @@ __all__ = [
     "good_comment_like_controller",
     "CartController",
     "cart_controller",
+    "DraftController",
+    "draft_controller",
 ]

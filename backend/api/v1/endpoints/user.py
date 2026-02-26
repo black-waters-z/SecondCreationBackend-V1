@@ -8,11 +8,12 @@ from tortoise.contrib.pydantic import pydantic_model_creator
 from tortoise.exceptions import DoesNotExist
 from tortoise.expressions import Q
 
-from backend.api.v1.endpoints.article import _extract_user_id_from_token
+from backend.api.v1.endpoints.article import _extract_user_id_from_token, _parse_user_from_token
 from backend.config import ACCESS_TOKEN_EXPIRE_MINUTES
 from backend.core import rt
 from backend.controller import user_controller
 from backend.models import User, UserAttention
+from backend.sc_utils import _extract_user_name_from_token
 from backend.schemas import UserCreate, UserUpdate
 from backend.security.password_security import create_access_token, verify_password, get_password_hash, oauth2_scheme
 
@@ -82,6 +83,34 @@ async def list_users(
     )
     items = [await UserOut.from_tortoise_orm(obj) for obj in records]
     return UserListResponse(total=total, items=items)
+
+
+@user.get("/token/refresh-token")
+async def refresh_token(token: str):
+    # try:
+    user= _parse_user_from_token(token)
+
+    user_id = user.get('uid')
+    user_name = user.get('sub')
+    user = await User.filter(id=user_id, username=user_name).first()
+    if not user:
+        return {"detail": "用户不存在"}
+    expires_delta = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        data={"sub": user_name, "uid": user_id},
+        expires_delta=expires_delta,
+    )
+    ttl_seconds = int(expires_delta.total_seconds())
+    redis_key = f"user:token:{user_id}"
+    try:
+        rt.setex(redis_key, ttl_seconds, access_token)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="令牌缓存失败",
+        ) from exc
+    return LoginResponse(access_token=access_token, expires_in=ttl_seconds)
+    # 生成新的访问令牌
 
 
 @user.post("/login", response_model=LoginResponse)

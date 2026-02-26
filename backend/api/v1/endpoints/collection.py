@@ -1,12 +1,15 @@
+from datetime import datetime, timedelta
 from typing import Annotated, List, Optional
 
 from tortoise.contrib.pydantic import pydantic_model_creator
+from tortoise.functions import Count
 
 from backend.sc_utils import _parse_image_url
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from pydantic import BaseModel
 
-from backend.models import Collection, User, Article
+from backend.models import Collection, User, Article, CollectionSubscription
+from backend.sc_utils.parse_url import _parse_list_urls, _parse_url
 from backend.security.password_security import oauth2_scheme
 from backend.api.v1.endpoints.article import _extract_user_id_from_token
 
@@ -57,6 +60,15 @@ async def subscribe_collection(
         )
     user = await User.get(id=user_id)
     await collection_obj.subscribers.add(user)
+    exist_record = await CollectionSubscription.filter(
+        collection_id=collection_id,
+        user_id=user_id,
+    ).exists()
+    if not exist_record:
+        await CollectionSubscription.create(
+            collection_id=collection_id,
+            user_id=user_id,
+        )
     return {"message": "订阅成功"}
 
 
@@ -107,4 +119,69 @@ async def list_collection_articles(token: Annotated[str, Depends(oauth2_scheme)]
     return {
         "items": result,
         "user": UserOut.from_orm(collection.author)
+    }
+
+
+async def _hot_collections_by_range(
+        start_dt: Optional[datetime],
+        page: int,
+        page_size: int,
+):
+    offset = (page - 1) * page_size
+    query = CollectionSubscription.all()
+    if start_dt:
+        query = query.filter(created_at__gte=start_dt)
+    rows = await (
+        query.group_by("collection_id")
+            .annotate(count=Count("id"))
+            .order_by("-count")
+            .offset(offset)
+            .limit(page_size)
+            .values(
+                "collection_id",
+                "count",
+                "collection__name",
+                "collection__description",
+                "collection__image_url",
+                "collection__author_id",
+                "collection__author__username",
+                "collection__author__avatar_url",
+                "collection__created_at",
+                "collection__updated_at",
+            )
+    )
+    return [
+        {
+            "id": row["collection_id"],
+            "name": row["collection__name"],
+            "description": row["collection__description"],
+            "image_url": _parse_url(row["collection__image_url"]),
+            "author_id": row["collection__author_id"],
+            "author_username": row["collection__author__username"],
+            "author_avatar_url": row["collection__author__avatar_url"],
+            "created_at": row["collection__created_at"],
+            "updated_at": row["collection__updated_at"],
+            "count": row["count"],
+        }
+        for row in rows
+    ]
+
+
+@collection.get("/list_hot_collection", summary="List hot collections")
+async def list_hot_collection(page: int = Query(1, ge=1),
+                              page_size: int = Query(10, ge=10, le=100)):
+    """
+    获取热门的合集
+    """
+    now = datetime.now()
+    start_year = datetime(now.year, 1, 1)
+    start_month = datetime(now.year, now.month, 1)
+    week_start = now - timedelta(days=now.weekday())
+    start_week = datetime(week_start.year, week_start.month, week_start.day)
+
+    return {
+        "all": await _hot_collections_by_range(None, page, page_size),
+        "year": await _hot_collections_by_range(start_year, page, page_size),
+        "month": await _hot_collections_by_range(start_month, page, page_size),
+        "week": await _hot_collections_by_range(start_week, page, page_size),
     }

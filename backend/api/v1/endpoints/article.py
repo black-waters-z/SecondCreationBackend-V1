@@ -6,6 +6,7 @@ from typing import Annotated, Dict, List, Optional, Tuple
 from tortoise.expressions import F, Q
 
 from backend.sc_utils import _parse_image_url
+from backend.sc_utils.parse_url import _parse_list_urls
 from settings import APP_BASE_URL
 import jwt
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -87,7 +88,7 @@ class ArticlePageOut(BaseModel):
 
 class ArticleListResponse(BaseModel):
     total: int
-    items: List[ArticleOut]
+    items: List[ArticleOutWithUserInfo]
 
 
 class ArticleSimpleStat(BaseModel):
@@ -129,6 +130,11 @@ def _extract_user_id_from_token(token: str) -> int:
             headers={"WWW-Authenticate": "Bearer"},
         )
     return user_id
+
+
+def _parse_user_from_token(token: str) -> User:
+    decoded = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM], options={"verify_exp": False})
+    return decoded
 
 
 def _build_user_info(user: Optional[User]) -> UserInfo:
@@ -442,7 +448,7 @@ def _resolve_time_range(
     raise ValueError("range_type参数仅支持year、month或week")
 
 
-@article.get("/get-filter-articles", response_model=ArticleListResponse)
+@article.get("/get-filter-articles", response_model=List[ArticleOutWithUserInfo])
 async def get_filtered_articles(
         token: Annotated[str, Depends(oauth2_scheme)],
         range_type: Optional[str] = Query(None, description="统计周期 year、month 或 week"),
@@ -499,20 +505,21 @@ async def get_filtered_articles(
         )
             .offset(offset)
             .limit(page_size)
-            .prefetch_related("tags")
+            .prefetch_related("tags", "author")
     )
 
     # 获取用户收藏的id
     favorited_ids = await UserFavorite.filter(user_id=user_id).values_list("article_id", flat=True)
-    items: List[ArticleOut] = []
+    items: List[ArticleOutWithUserInfo] = []
     for article_obj in records:
         if article_obj.content:
             article_obj.content = article_obj.content[:100]
         article_obj.has_favorited = article_obj.id in favorited_ids
         article_obj.image_urls = _parse_image_url(article_obj)
+        article_obj.author = article_obj.author
         items.append(article_obj)
     count = len(items)
-    return ArticleListResponse(total=count, items=items)
+    return items
 
 
 @article.get("/from_tag_get", response_model=List[ArticleOutWithUserInfo])
@@ -586,8 +593,6 @@ async def search_articles(
 ):
     query = Q()
     if search_keys.tag_ids:
-        # for tag in search_keys.tag_ids:
-        #     query = query & Q(tags__id=tag)
         query = query & Q(tags__id__in=search_keys.tag_ids)
     if search_keys.keyword:
         query = query & Q(title__icontains=search_keys.keyword)
@@ -602,15 +607,15 @@ async def search_articles(
             query = query & Q(created_at__gte=datetime.now() - timedelta(days=365))
 
     query = Article.filter(query)
+    order_by = search_keys.order_by
+    if search_keys.peroid == PeroidEnum.newest:
+        order_by = '-created_at'
 
     query = query.annotate(
         total_score=F("like_count") + F("favorite_count")).order_by(
-        search_keys.order_by).offset(search_keys.page - 1).limit(search_keys.per_page)
+        order_by).offset((search_keys.page - 1) * search_keys.per_page).limit(search_keys.per_page)
 
     query = query.prefetch_related("tags", "author")
-
-    # if search_keys.must_have_ids:
-    #     query = query.filter(tags__id=search_keys.must_have_ids[0])
     articles = await query
 
     results = []
@@ -623,7 +628,16 @@ async def search_articles(
         }
         result = ArticleOut.model_validate(article_obj).model_dump()
         result['author'] = user
-        results.append(result)
+        tags = []
+        for tag in article_obj.tags:
+            tags.append(tag.id)
+
+        if search_keys.must_have_ids and all(x in tags for x in search_keys.must_have_ids):
+            result['has_must_have_ids'] = True
+            results.append(result)
+
+        if not search_keys.must_have_ids:
+            results.append(result)
 
     # 确保获取实际的 tags 数据
     return results
@@ -720,21 +734,15 @@ async def get_article_with_status(
             tags_data.append(TagOut.from_orm(tag))
 
     # 构建 ArticleOut 实例
-    images = []
     if hasattr(article_obj, 'image_urls') and article_obj.image_urls:
-        for image_url in article_obj.image_urls:
-            if not image_url.startswith("http"):
-                if image_url.endswith(".png") or image_url.endswith(".jpg") or image_url.endswith(".jpeg"):
-                    images.append(APP_BASE_URL + '/static/upload_IMG/' + image_url)
-                else:
-                    images.append(APP_BASE_URL + '/static/upload_Video/' + image_url)
+        article_obj.image_urls = _parse_list_urls(ArticleOut.model_validate(article_obj).image_urls)
 
     article_out = ArticleOut(
         id=article_obj.id,
         title=article_obj.title,
         subtitle=article_obj.subtitle,
         content=article_obj.content,
-        image_urls=images,
+        image_urls=article_obj.image_urls,
         view_count=article_obj.view_count,
         like_count=article_obj.like_count,
         favorite_count=article_obj.favorite_count,

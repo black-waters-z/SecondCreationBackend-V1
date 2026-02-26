@@ -14,6 +14,7 @@ __all__ = [
     'UserViewHistory', 'UserFavorite', 'UserLike', 'Reward',
     'ArticleRewardRanking', 'UserInterest', 'ArticleRecommendation',
     'ArticleComment', 'ArticleCommentLike', 'Collection',
+    'CollectionSubscription',
     'Good', 'GoodChoice', 'GoodComment', 'GoodCommentLike', "Order", "Cart",
     'Draft'
 ]

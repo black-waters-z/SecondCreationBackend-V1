@@ -23,7 +23,7 @@ from backend.security.password_security import oauth2_scheme
 draft = APIRouter(prefix="/drafts", tags=["Drafts"])
 
 
-@draft.get("/items", response_model=List[ArticleCreate], summary="获取用户草稿列表")
+@draft.get("/items", response_model=List[DraftCreate], summary="获取用户草稿列表")
 async def get_drafts(
         token: Annotated[str, Depends(oauth2_scheme)],
         page: int = Query(1, ge=1),

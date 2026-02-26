@@ -21,3 +21,22 @@ def _extract_user_id_from_token(token: str) -> int:
             headers={"WWW-Authenticate": "Bearer"},
         )
     return user_id
+
+
+def _extract_user_name_from_token(token: str) -> str:
+    try:
+        decoded = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+    except InvalidTokenError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="凭证无效",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    user_name = decoded.get("sub")
+    if not user_name:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="凭证无效",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return user_name

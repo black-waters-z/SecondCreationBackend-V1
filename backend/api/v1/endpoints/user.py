@@ -4,22 +4,26 @@ from typing import List, Optional, Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel
+from starlette.responses import JSONResponse
 from tortoise.contrib.pydantic import pydantic_model_creator
 from tortoise.exceptions import DoesNotExist
 from tortoise.expressions import Q
-
 from backend.api.v1.endpoints.article import _extract_user_id_from_token, _parse_user_from_token
 from backend.config import ACCESS_TOKEN_EXPIRE_MINUTES
 from backend.core import rt
 from backend.controller import user_controller
 from backend.models import User, UserAttention
-from backend.sc_utils import _extract_user_name_from_token
+from backend.sc_utils import _extract_user_name_from_token, _parse_image_url
+from backend.sc_utils.parse_url import _parse_url
 from backend.schemas import UserCreate, UserUpdate
 from backend.security.password_security import create_access_token, verify_password, get_password_hash, oauth2_scheme
 
 user = APIRouter(prefix="/users", tags=["用户管理接口"])
 
 UserOut = pydantic_model_creator(User, name="UserOut", exclude=("password_hash",))
+UserOutWithPassword = pydantic_model_creator(
+    User, name="UserOutWithPassword",
+)
 
 
 class UserListResponse(BaseModel):
@@ -57,6 +61,7 @@ async def get_me(token: Annotated[str, Depends(oauth2_scheme)], input_user_id: O
         userInfo = await User.get(id=user_id)
 
     user = (await UserOut.from_tortoise_orm(userInfo)).model_dump()
+    user['avatar_url'] = _parse_url(user['avatar_url'])
     return {
         **user,
         'following': following,
@@ -88,7 +93,7 @@ async def list_users(
 @user.get("/token/refresh-token")
 async def refresh_token(token: str):
     # try:
-    user= _parse_user_from_token(token)
+    user = _parse_user_from_token(token)
 
     user_id = user.get('uid')
     user_name = user.get('sub')
@@ -193,7 +198,7 @@ async def toggle_attention(token: Annotated[str, Depends(oauth2_scheme)],
         }
 
 
-@user.get("/{user_id}", response_model=UserOut)
+@user.get("/{user_id}", response_model=UserOut, summary="获取用户信息")
 async def get_user(user_id: int):
     try:
         record = await user_controller.get_item(user_id)
@@ -202,20 +207,46 @@ async def get_user(user_id: int):
     return await UserOut.from_tortoise_orm(record)
 
 
-@user.put("/{user_id}", response_model=UserOut)
-async def update_user(user_id: int, user_in: UserUpdate):
-    if not user_in.model_dump(exclude_unset=True, exclude_none=True):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="请至少提供一个需要更新的字段")
+@user.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT, summary="删除用户")
+async def delete_user(token: Annotated[str, Depends(oauth2_scheme)]):
     try:
-        updated = await user_controller.update_item(user_id, user_in)
-    except DoesNotExist:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="用户不存在")
-    return await UserOut.from_tortoise_orm(updated)
-
-
-@user.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_user(user_id: int):
-    try:
+        user_id = _extract_user_id_from_token(token)
         await user_controller.delete_item(user_id)
     except DoesNotExist:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="用户不存在")
+
+
+@user.put("/", response_model=UserOut, summary="更新用户信息")
+async def change_user(token: Annotated[str, Depends(oauth2_scheme)], user: UserUpdate):
+    try:
+        user_id = _extract_user_id_from_token(token)
+        user_get = (await UserOutWithPassword.from_tortoise_orm(await User.get(id=user_id))).model_dump()
+        if user.password_hash and user.old_password:
+            verify = verify_password(user.old_password, user_get.get('password_hash'))
+            if not verify:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="输入密码错误",
+                )
+            password_hash_in = get_password_hash(user.password_hash)
+            user_get['password_hash'] = password_hash_in
+        if user.username:
+            user_get['username'] = user.username
+        if user.avatar_url:
+            user_get['avatar_url'] = user.avatar_url
+        if user.email:
+            user_get['email'] = user.email
+        result = await user_controller.update_item(user_id, user_get)
+        return JSONResponse(status_code=status.HTTP_200_OK, content={
+            "message": "更新成功",
+            'id': result.id
+        })
+    except DoesNotExist:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="用户不存在")
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"更新用户信息失败{exc}",
+        ) from exc
+
+

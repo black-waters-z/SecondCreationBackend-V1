@@ -229,9 +229,12 @@ async def list_articles(page: int):
 async def list_favorite_articles(
         token: Annotated[str, Depends(oauth2_scheme)],
         page: int = Query(1, ge=1),
+        page_size: int = Query(30, ge=1, le=100),
+        user_id: Optional[int] = Query(None, ge=1, description="可选的作者用户ID，不传则使用 token 对应的用户"),
 ) -> List[ArticleOut]:
-    user_id = _extract_user_id_from_token(token)
-    page_size = 100
+    if not user_id:
+        user_id = _extract_user_id_from_token(token)
+
     offset = (page - 1) * page_size
     favorites = await (
         UserFavorite.filter(user_id=user_id)

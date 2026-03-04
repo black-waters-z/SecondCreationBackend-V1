@@ -57,6 +57,7 @@ temp/
 # *.md
 
 # 忽略上传文件等
+static/
 uploads/
 media/
 staticfiles/

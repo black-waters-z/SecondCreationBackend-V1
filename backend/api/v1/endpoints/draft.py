@@ -3,20 +3,16 @@ from decimal import Decimal
 from enum import Enum
 from typing import Annotated, Dict, List, Optional, Tuple
 
+from tortoise.exceptions import DoesNotExist
 from tortoise.expressions import F, Q
 
 from backend.sc_utils import _parse_image_url, _extract_user_id_from_token
+from backend.schemas.draft import DraftIn
 from settings import APP_BASE_URL
 import jwt
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from jwt import InvalidTokenError
-from pydantic import BaseModel, Field
-from tortoise.functions import Count
-
-from backend.config import ALGORITHM, SECRET_KEY
 from backend.controller import draft_controller
-from backend.models import Article, ArticleComment, Collection, UserFavorite, UserLike, UserViewHistory, User, \
-    UserAttention
+from backend.models import Draft
 from backend.schemas import ArticleCreate, ArticleUpdate, DraftCreate, DraftUpdate
 from backend.security.password_security import oauth2_scheme
 
@@ -39,7 +35,7 @@ async def get_drafts(
 @draft.post("", summary="创建草稿", status_code=status.HTTP_201_CREATED)
 async def create_draft(
         token: Annotated[str, Depends(oauth2_scheme)],
-        draft_in: DraftCreate
+        draft_in: DraftIn
 ):
     """
     创建草稿
@@ -48,6 +44,21 @@ async def create_draft(
     await draft_controller.create_item(
         draft_in.dict(exclude_none=True, exclude_unset=True, exclude_defaults=True) | {"author_id": user_id})
     return {"message": "创建成功"}
+
+
+@draft.get("/{draft_id}", response_model=DraftCreate, summary="获取草稿")
+async def get_draft(
+        token: Annotated[str, Depends(oauth2_scheme)],
+        draft_id: int
+):
+    """
+    获取草稿
+    """
+    try:
+        user_id = _extract_user_id_from_token(token)
+        return await Draft.get(id=draft_id, author_id=user_id)
+    except DoesNotExist:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="草稿不存在")
 
 
 @draft.put("/{draft_id}", summary="更新草稿")
@@ -67,7 +78,7 @@ async def update_draft(
     return {"message": "更新成功"}
 
 
-@draft.delete("/{draft_id}", summary="删除草稿")
+@draft.delete("/{draft_id}", summary="删除草稿", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_draft(
         token: Annotated[str, Depends(oauth2_scheme)],
         draft_id: int
@@ -76,4 +87,5 @@ async def delete_draft(
     删除草稿
     """
     user_id = _extract_user_id_from_token(token)
-    await draft_controller.delete_item(draft_id, Q(author_id=user_id))
+    await Draft.filter(id=draft_id, author_id=user_id).delete()
+    return {"message": "删除成功"}

@@ -4,8 +4,14 @@ from pydantic import BaseModel
 from tortoise.contrib.pydantic import pydantic_model_creator
 from backend.models import Draft
 
+class DraftIn(BaseModel):
+    title: str
+    content: str
+    subtitle: Optional[str] = None
+    image_urls: Optional[List[str]] = None
 
 class DraftCreate(BaseModel):
+    id: int
     title: str
     content: str
     subtitle: Optional[str] = None

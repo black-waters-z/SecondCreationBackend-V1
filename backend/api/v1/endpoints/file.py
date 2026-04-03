@@ -1,16 +1,22 @@
 import os
+from typing import Annotated
 
-from fastapi import APIRouter, UploadFile, HTTPException, File
+from fastapi import APIRouter, UploadFile, HTTPException, File, Depends
 from pydantic import BaseModel
 import base64
 import uuid
 import re
 
-file = APIRouter()
+import os
+from fastapi import UploadFile, Form
 
-# class FileResponse(BaseModel):
-#
-#
+from backend.models import FileUploadModel
+from backend.sc_utils import _extract_user_id_from_token
+from backend.security.password_security import oauth2_scheme
+
+UPLOAD_DIR = "/static/uploads/"
+
+file = APIRouter()
 
 class ImageUploadRequest(BaseModel):
     file: dict = {}
@@ -162,3 +168,84 @@ def delete_upload_image(file_name: str):
         return {"status": "success", "message": "文件删除成功"}
     else:
         return {"status": "error", "message": "文件不存在"}
+
+
+class InitUploadRequest(BaseModel):
+    file_hash: str
+    total_chunks: int
+
+
+@file.post("/upload/init", summary="大文件切片初始化上传")
+async def init_upload(token: Annotated[str, Depends(oauth2_scheme)], init_request: InitUploadRequest):
+    # 写数据库
+    task = {
+        "file_hash": init_request.file_hash,
+        "total_chunks": init_request.total_chunks,
+        "uploaded_chunks": 0
+    }
+    user_id = _extract_user_id_from_token(token)
+    print(">>>", task)
+    await FileUploadModel.create(**task, user_id=user_id)
+
+    return {"msg": "ok"}
+
+
+@file.post("/upload/chunk", summary="大文件切片上传")
+async def upload_chunk(
+        file: UploadFile,
+        hash: str = Form(...),
+        index: int = Form(...)
+):
+    chunk_dir = os.path.join("backend", "static", "uploads", hash)
+
+    os.makedirs(chunk_dir, exist_ok=True)
+
+    chunk_path = f"{chunk_dir}/{index}"
+
+    with open(chunk_path, "wb") as f:
+        f.write(await file.read())
+
+    # 更新数据库进度
+    # uploaded_chunks += 1
+
+    return {"msg": "chunk uploaded"}
+
+
+@file.get("/upload/progress", summary="大文件上传进度查询")
+def progress(file_hash: str):
+    chunk_dir = f"uploads/{file_hash}"
+
+    if not os.path.exists(chunk_dir):
+        return {"uploaded": []}
+
+    uploaded = os.listdir(chunk_dir)
+
+    return {"uploaded": uploaded}
+
+
+class MergeChunksRequest(BaseModel):
+    file_hash: str
+
+
+@file.post("/upload/merge", summary="大文件切片合并")
+async def merge_chunks(token: Annotated[str, Depends(oauth2_scheme)], file_request: MergeChunksRequest):
+    import shutil
+    user_id = _extract_user_id_from_token(token)
+    file_upload = await FileUploadModel.get(file_hash=file_request.file_hash, user_id=user_id)
+    if not file_upload:
+        raise HTTPException(status_code=404, detail="File upload not found")
+    chunk_dir = os.path.join("backend", "static", "uploads", file_request.file_hash)
+    file_path = os.path.join("backend", "static", "upload_Video", f"{file_request.file_hash}.mp4")
+    os.makedirs(chunk_dir, exist_ok=True)
+    with open(file_path, "wb") as f:
+        for i in range(file_upload.total_chunks):
+            chunk_path = f"{chunk_dir}/{i}"
+            with open(chunk_path, "rb") as chunk_file:
+                f.write(chunk_file.read())
+    # 删除切片
+    await file_upload.delete()
+    # 删除切片 目录
+    shutil.rmtree(chunk_dir)
+    return {"msg": "ok",
+            "fileUrl": f"{file_request.file_hash}.mp4"
+            }

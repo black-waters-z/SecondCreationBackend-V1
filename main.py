@@ -1,22 +1,35 @@
-from fastapi import FastAPI, HTTPException
-from fastapi.staticfiles import StaticFiles
+from fastapi import HTTPException
+from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.responses import FileResponse
 import uvicorn
-from starlette.responses import JSONResponse
+from starlette.responses import HTMLResponse
 from tortoise.contrib.fastapi import register_tortoise
 
 import settings
-from backend.sc_utils import _parse_image_url
-from backend.sc_utils.parse_url import _parse_list_urls
 from settings import TORTOISE_CONFIG
 from backend.api.v1.endpoints \
     import *
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi import FastAPI, Request, Response
-import json
+from fastapi import FastAPI
 from pathlib import Path
 
-app = FastAPI()
+app = FastAPI(
+    docs_url=None,  # 关闭默认docs
+    redoc_url=None,  # 关闭redoc
+)
+
+
+# 手动覆盖 docs，使用国内CDN
+@app.get("/docs", response_class=HTMLResponse, include_in_schema=False)
+async def custom_swagger_ui():
+    return get_swagger_ui_html(
+        openapi_url=app.openapi_url,
+        title=app.title + " API文档",
+        # 国内高速CDN（绝对可用）
+        swagger_js_url="https://cdn.staticfile.net/swagger-ui/5.9.4/swagger-ui-bundle.min.js",
+        swagger_css_url="https://cdn.staticfile.net/swagger-ui/5.9.4/swagger-ui.min.css",
+    )
+
 
 #
 # @app.middleware("http")
@@ -50,7 +63,7 @@ app = FastAPI()
 
 register_tortoise(app,
                   config=TORTOISE_CONFIG,
-                  # generate_schemas=True, # 如果数据库为空则自动生成对应表单，生产环境不要开
+                  generate_schemas=True,  # 如果数据库为空则自动生成对应表单，生产环境不要开
                   # add_exception_handlers=True # 生产环境不要开，会泄露调试信息
                   )
 
@@ -108,9 +121,9 @@ app.include_router(collection, tags=["合集接口"])
 app.include_router(article_data, tags=["文章数据接口"])
 app.include_router(contact, tags=["所有互动接口"])
 app.include_router(draft, tags=["草稿接口"])
-
+app.include_router(ai, tags=["AI接口"])
 if __name__ == '__main__':
     # 宿舍
     # uvicorn.run("main:app", port=8080, reload=True, log_level=True, host="localhost")
     # 教室
-    uvicorn.run("main:app",port=8080, reload=True, log_level=True,host=settings.BASE_HOST)
+    uvicorn.run("main:app", port=8080, reload=True, log_level=True, host=settings.BASE_HOST)

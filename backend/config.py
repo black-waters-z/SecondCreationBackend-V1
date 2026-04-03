@@ -2,30 +2,26 @@ import asyncio
 
 from tortoise import Tortoise
 
-TORTOISE_CONFIG={
-        'connections': {
-            "default": {
-                "engine": "tortoise.backends.mysql",
-                "credentials": {
-                    "host": "localhost",
-                    "port": "3306",
-                    "user": "root",
-                    "password": "161231",
-                    "database": "scforum",
-                    "pool_recycle": 3600,  # 连接回收时间（秒）
-                    "connect_timeout": 30,  # 连接超时（秒）
-                }
+TORTOISE_CONFIG = {
+    'connections': {
+        "default": {
+            "engine": "tortoise.backends.sqlite",
+            "credentials": {
+                "file_path": "./scforum.db",  # SQLite 数据库文件路径
             }
-        },
-        'apps':{
-            'models':{
-                'models':['models','aerich.models'],
-                'default_connection':'default'
-            }
-        },
-        'user_tz':False,
-        'timezone':'Asia/Shanghai'
-    }
+        }
+    },
+    'apps': {
+        'models': {
+            'models': ['backend.models', 'aerich.models'],
+            'default_connection': 'default'
+        }
+    },
+    'user_tz': False,
+    'timezone': 'Asia/Shanghai'
+}
+
+# ... existing code ...
 
 
 SECRET_KEY="df019c7cb10e06fb1825ca75c6d7e3c2637cf579da38c487392e0ceb1cccf662"

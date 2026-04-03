@@ -281,3 +281,22 @@ class ArticleCommentLike(Model):
     class Meta:
         table = "article_comment_likes"
         unique_together = ("comment", "user")
+
+
+class FileUploadModel(Model):
+    """大文件上传"""
+    id = fields.IntField(pk=True)
+    file_hash = fields.CharField(max_length=32)
+    total_chunks = fields.IntField()
+    uploaded_chunks = fields.IntField()
+    created_at = fields.DatetimeField(auto_now_add=True)
+    user = fields.ForeignKeyField(
+        "models.User",
+        related_name="files",
+        on_delete=CASCADE,
+    )
+
+    class Meta:
+        table = "files"
+        # 同一用户不可以上传相同文件，但是不同用户可以上传相同文件
+        unique_together = ("file_hash", "user")

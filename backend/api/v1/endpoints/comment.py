@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Annotated, List, Optional
+from typing import Annotated, Dict, List, Optional, Set
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -70,6 +70,25 @@ class ArticleCommentCreate(BaseModel):
         return cleaned
 
 
+class ChildCommentUserInfo(BaseModel):
+    id: Optional[int] = None
+    username: Optional[str] = None
+    avatar_url: Optional[str] = None
+
+
+class ChildCommentBaseOut(BaseModel):
+    id: int
+    content: str
+    created_at: datetime
+    user: Optional[ChildCommentUserInfo] = None
+    has_liked: Optional[bool] = Field(default=False)
+    like_count: int = 0
+
+
+class ChildCommentTreeOut(ChildCommentBaseOut):
+    childs: List[ChildCommentBaseOut] = Field(default_factory=list)
+
+
 async def _ensure_article_exists(article_id: int) -> None:
     exists = await Article.filter(id=article_id).exists()
     if not exists:
@@ -89,6 +108,46 @@ async def _load_child_comments(parent_id: int) -> List[ArticleCommentBaseOut]:
         ArticleCommentBaseOut.model_validate(child)
         for child in children
     ]
+
+
+def _build_child_comment_payload(
+        comment: ArticleComment,
+        *,
+        has_liked: bool = False,
+) -> ChildCommentBaseOut:
+    user_model = getattr(comment, "user", None)
+    user_info = None
+    if user_model:
+        user_info = ChildCommentUserInfo(
+            id=user_model.id,
+            username=user_model.username,
+            avatar_url=user_model.avatar_url,
+        )
+    return ChildCommentBaseOut(
+        id=comment.id,
+        content=comment.content,
+        created_at=comment.created_at,
+        user=user_info,
+        has_liked=has_liked,
+        like_count=comment.like_count,
+    )
+
+
+async def _load_descendant_map(
+        parent_ids: List[int],
+) -> Dict[int, List[ArticleComment]]:
+    descendant_map: Dict[int, List[ArticleComment]] = {}
+    queue = list(parent_ids)
+    while queue:
+        rows = await ArticleComment.filter(
+            parent_id__in=queue,
+            is_deleted=False,
+        ).prefetch_related("user").order_by("created_at")
+        queue = []
+        for row in rows:
+            descendant_map.setdefault(row.parent_id, []).append(row)
+            queue.append(row.id)
+    return descendant_map
 
 
 async def _resolve_root_comment_id(comment: ArticleComment) -> Optional[int]:
@@ -145,24 +204,55 @@ async def list_article_comments(
     )
 
 
-@comment.get("/childComment")
+@comment.get("/childComment", response_model=List[ChildCommentTreeOut])
 async def list_article_child_comments(
         token: Annotated[str, Depends(oauth2_scheme)],
         parent_id: int = Query(..., ge=1),
-        page: int = Query(1, ge=1),
-        page_size: int = Query(PAGE_SIZE, ge=1),
         order_by: str = Query("created_at" or "-created_at" or "like_count")
 ):
     user_id = _extract_user_id_from_token(token)
-    query = (ArticleComment.filter(parent_id=parent_id).prefetch_related("user").order_by(order_by))
-    childs = await query.offset(page - 1).limit(page_size)
-    result = []
+    query = (
+        ArticleComment.filter(parent_id=parent_id, is_deleted=False)
+        .prefetch_related("user")
+        .order_by(order_by)
+    )
+    childs = await query
+    child_ids = [child.id for child in childs]
+    # 遍历获取到的二级评论，批量查询所有二级评论的子孙评论
+    descendant_map = await _load_descendant_map(child_ids) if child_ids else {}
+
+    all_comment_ids = list(child_ids)
+    for comments in descendant_map.values():
+        all_comment_ids.extend([comment.id for comment in comments])
+    liked_ids: Set[int] = set()
+    if user_id and all_comment_ids:
+        liked_ids = set(
+            await ArticleCommentLike.filter(
+                user_id=user_id, comment_id__in=all_comment_ids
+            ).values_list("comment_id", flat=True)
+        )
+    result: List[ChildCommentTreeOut] = []
     for child in childs:
-        data = ArticleCommentBaseOut.model_validate(child)
-        has_liked = await ArticleCommentLike.filter(user_id=user_id, comment_id=child.id).exists()
-        data.has_liked = has_liked
+        descendant_payloads: List[ChildCommentBaseOut] = []
+        queue = list(descendant_map.get(child.id, []))
+        while queue:
+            current = queue.pop(0)
+            descendant_payloads.append(
+                _build_child_comment_payload(
+                    current,
+                    has_liked=current.id in liked_ids,
+                )
+            )
+            queue.extend(descendant_map.get(current.id, []))
+
         result.append(
-            data
+            ChildCommentTreeOut(
+                **_build_child_comment_payload(
+                    child,
+                    has_liked=child.id in liked_ids,
+                ).model_dump(),
+                childs=descendant_payloads,
+            )
         )
     return result
 
@@ -245,4 +335,3 @@ async def delete_article_comment(
             reply_count=F("reply_count") - 1
         )
     return {"message": "删除成功"}
-

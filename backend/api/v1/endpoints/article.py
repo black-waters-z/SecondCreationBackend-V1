@@ -315,7 +315,7 @@ async def delete_or_add_favorite_article(token: Annotated[str, Depends(oauth2_sc
         )
 
 
-@article.post("/like/{article_id}")
+@article.post("/like/{article_id}",summary="点赞文章或者取消点赞")
 async def delete_or_add_like_article(
         token: Annotated[str, Depends(oauth2_scheme)],
         article_id: int,
@@ -347,7 +347,7 @@ async def list_view_history(
         page: int = Query(1, ge=1),
 ) -> List[ArticleOut]:
     user_id = _extract_user_id_from_token(token)
-    page_size = 15
+    page_size = 30
     offset = (page - 1) * page_size
     histories = await (
         UserViewHistory.filter(user_id=user_id)
@@ -361,7 +361,7 @@ async def list_view_history(
         article_obj = getattr(history, "article", None)
         if not article_obj:
             continue
-        articles.append(await ArticleOut.from_tortoise_orm(article_obj))
+        articles.append((ArticleOut.validate(article_obj)).dict())
     return articles
 
 
@@ -388,13 +388,13 @@ async def create_view_history(
         article_id=payload.articleId,
     ).first()
     if existing:
-        await existing.delete()
+        return ArticleOut.validate(article_obj)
     await UserViewHistory.create(
         user_id=user_id,
         article_id=payload.articleId,
         duration=duration_value,
     )
-    return await ArticleOut.from_tortoise_orm(article_obj)
+    return ArticleOut.validate(article_obj)
 
 
 @article.get("/recommendations", response_model=List[ArticleOutWithUserInfo])

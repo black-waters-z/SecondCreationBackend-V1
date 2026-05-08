@@ -23,7 +23,7 @@ app = FastAPI(
 @app.get("/docs", response_class=HTMLResponse, include_in_schema=False)
 async def custom_swagger_ui():
     return get_swagger_ui_html(
-        openapi_url=app.openapi_url,
+        openapi_url=app.openapi_url or "",
         title=app.title + " API文档",
         # 国内高速CDN（绝对可用）
         swagger_js_url="https://cdn.staticfile.net/swagger-ui/5.9.4/swagger-ui-bundle.min.js",

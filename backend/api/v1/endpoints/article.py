@@ -7,6 +7,7 @@ from tortoise.expressions import F, Q
 
 from backend.sc_utils import _parse_image_url
 from backend.sc_utils.parse_url import _parse_list_urls
+from backend.sc_utils.recommend import hybrid_post_recommend
 from settings import APP_BASE_URL
 import jwt
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -401,14 +402,62 @@ async def create_view_history(
 async def get_recommended_articles(token: Annotated[str, Depends(oauth2_scheme)],
                                    limit: int = Query(default=15, ge=1, le=50, description="返回的推荐文章数量"),
                                    ):
+    # 从用户近一个月喜欢的最新帖子id中查询该用户应该被推荐的文章
+    # 使用混合推荐算法生成推荐结果
     user_id = _extract_user_id_from_token(token)
-    query = (
-        Article.filter(status="published")
-            .order_by("-view_count", "-like_count", "-favorite_count", "-reward_amount")
-            .limit(limit)
-    )
-    articles = await query.prefetch_related("tags", "author")
-    await UserLike.filter()
+
+    # 获取用户最近点赞的文章作为推荐起点
+    liked_articles = await UserLike.filter(user_id=user_id).order_by("-liked_at").limit(1).values_list("article_id", flat=True)
+
+    # 如果用户没有点赞历史，使用默认文章ID
+    if not liked_articles:
+        seed_article_id = 1
+    else:
+        seed_article_id = liked_articles[0]
+
+    # 使用混合推荐算法获取推荐结果
+    try:
+        recommend_results = hybrid_post_recommend(seed_article_id, top_n=limit)
+    except Exception as e:
+        # 如果推荐算法失败，回退到默认推荐
+        query = (
+            Article.filter(id__in=[seed_article_id])
+                .order_by("-view_count", "-like_count", "-favorite_count", "-reward_amount")
+                .limit(limit)
+        )
+        articles = await query.prefetch_related("tags", "author")
+        serialized_articles: List[ArticleOut] = []
+        favorited_list = await UserFavorite.filter(user_id=user_id).all().values_list("article_id", flat=True)
+        for article_obj in articles:
+            if article_obj.content:
+                article_obj.content = article_obj.content[:100]
+            favorited = article_obj.id in favorited_list
+            article_obj.has_favorited = favorited
+            article_obj.image_urls = _parse_image_url(article_obj)
+            article_obj.author = article_obj.author
+            serialized_articles.append(article_obj)
+        return serialized_articles
+
+    # 从推荐结果中获取文章ID列表
+    recommended_ids = recommend_results["id"].tolist() if not recommend_results.empty else []
+
+    # 如果推荐结果为空，回退到默认推荐
+    if not recommended_ids:
+        query = (
+            Article.filter(id__in=[seed_article_id])
+                .order_by("-view_count", "-like_count", "-favorite_count", "-reward_amount")
+                .limit(limit)
+        )
+        articles = await query.prefetch_related("tags", "author")
+    else:
+        # 根据推荐结果获取完整的文章信息
+        query = (
+            Article.filter(id__in=recommended_ids)
+                .prefetch_related("tags", "author")
+        )
+        articles = await query
+
+    # 处理文章信息，确保返回格式正确
     serialized_articles: List[ArticleOut] = []
     favorited_list = await UserFavorite.filter(user_id=user_id).all().values_list("article_id", flat=True)
     for article_obj in articles:

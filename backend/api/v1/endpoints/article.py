@@ -8,6 +8,7 @@ from tortoise.expressions import F, Q
 from backend.sc_utils import _parse_image_url
 from backend.sc_utils.parse_url import _parse_list_urls
 from backend.sc_utils.recommend import hybrid_post_recommend
+from backend.sc_utils.recommend_3 import HybridMultimodalRecommender
 from settings import APP_BASE_URL
 import jwt
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -38,7 +39,7 @@ class TagOut(BaseModel):
 class UserInfo(BaseModel):
     id: int
     username: str
-    avatar_url: str
+    avatar_url: Optional[str] = None
     has_been_followed: Optional[bool] = False
 
 
@@ -403,25 +404,17 @@ async def get_recommended_articles(token: Annotated[str, Depends(oauth2_scheme)]
                                    limit: int = Query(default=15, ge=1, le=50, description="返回的推荐文章数量"),
                                    ):
     # 从用户近一个月喜欢的最新帖子id中查询该用户应该被推荐的文章
-    # 使用混合推荐算法生成推荐结果
+    # 使用混合推荐算法生成推荐结果（内容 + 协同过滤 + 多模态双塔）
     user_id = _extract_user_id_from_token(token)
 
-    # 获取用户最近点赞的文章作为推荐起点
-    liked_articles = await UserLike.filter(user_id=user_id).order_by("-liked_at").limit(1).values_list("article_id", flat=True)
-
-    # 如果用户没有点赞历史，使用默认文章ID
-    if not liked_articles:
-        seed_article_id = 1
-    else:
-        seed_article_id = liked_articles[0]
-
-    # 使用混合推荐算法获取推荐结果
+    # 使用 HybridMultimodalRecommender 获取推荐结果
     try:
-        recommend_results = hybrid_post_recommend(seed_article_id, top_n=limit)
+        hybrid_rec = HybridMultimodalRecommender()
+        recommend_results = hybrid_rec.recommend(user_id, top_k=limit)
     except Exception as e:
         # 如果推荐算法失败，回退到默认推荐
         query = (
-            Article.filter(id__in=[seed_article_id])
+            Article.all()
                 .order_by("-view_count", "-like_count", "-favorite_count", "-reward_amount")
                 .limit(limit)
         )
@@ -439,12 +432,12 @@ async def get_recommended_articles(token: Annotated[str, Depends(oauth2_scheme)]
         return serialized_articles
 
     # 从推荐结果中获取文章ID列表
-    recommended_ids = recommend_results["id"].tolist() if not recommend_results.empty else []
+    recommended_ids = [result["article_id"] for result in recommend_results] if recommend_results else []
 
     # 如果推荐结果为空，回退到默认推荐
     if not recommended_ids:
         query = (
-            Article.filter(id__in=[seed_article_id])
+            Article.all()
                 .order_by("-view_count", "-like_count", "-favorite_count", "-reward_amount")
                 .limit(limit)
         )

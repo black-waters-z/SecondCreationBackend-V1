@@ -13,7 +13,7 @@ TORTOISE_CONFIG = {
     },
     'apps': {
         'models': {
-            'models': ['backend.models', 'aerich.models'],
+            'models': ['models', 'aerich.models'],
             'default_connection': 'default'
         }
     },

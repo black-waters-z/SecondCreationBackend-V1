@@ -1,10 +1,13 @@
+import json
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from decimal import Decimal
 from enum import Enum
 from typing import Annotated, Dict, List, Optional, Tuple
-
+from fastapi import BackgroundTasks
 from tortoise.expressions import F, Q
-
+from backend.core.redis import rt
 from backend.sc_utils import _parse_image_url
 from backend.sc_utils.parse_url import _parse_list_urls
 from backend.sc_utils.recommend import hybrid_post_recommend
@@ -399,37 +402,81 @@ async def create_view_history(
     return ArticleOut.validate(article_obj)
 
 
-@article.get("/recommendations", response_model=List[ArticleOutWithUserInfo])
-async def get_recommended_articles(token: Annotated[str, Depends(oauth2_scheme)],
-                                   limit: int = Query(default=15, ge=1, le=50, description="返回的推荐文章数量"),
-                                   ):
-    # 从用户近一个月喜欢的最新帖子id中查询该用户应该被推荐的文章
-    # 使用混合推荐算法生成推荐结果（内容 + 协同过滤 + 多模态双塔）
-    user_id = _extract_user_id_from_token(token)
+# 创建线程池
+_executor = ThreadPoolExecutor(max_workers=4)
 
-    # 使用 HybridMultimodalRecommender 获取推荐结果
+
+def _refill_recommend_cache_sync(user_id: int, count: int = 30):
+    """同步任务：补充推荐缓存"""
     try:
-        hybrid_rec = HybridMultimodalRecommender()
-        recommend_results = hybrid_rec.recommend(user_id, top_k=limit)
+        cache_key = f"recommend:user:{user_id}"
+        recommender = HybridMultimodalRecommender()
+        recommend_results = recommender.recommend(user_id, top_k=count)
+
+        # 推入Redis List
+        for rec in recommend_results:
+            rt.rpush(cache_key, json.dumps(rec))
+
+        # 设置过期时间1小时
+        rt.expire(cache_key, 3600)
+        print(f"[DEBUG] Refilled cache for user {user_id}, added {len(recommend_results)} items")
     except Exception as e:
-        # 如果推荐算法失败，回退到默认推荐
-        query = (
-            Article.all()
-                .order_by("-view_count", "-like_count", "-favorite_count", "-reward_amount")
-                .limit(limit)
-        )
-        articles = await query.prefetch_related("tags", "author")
-        serialized_articles: List[ArticleOut] = []
-        favorited_list = await UserFavorite.filter(user_id=user_id).all().values_list("article_id", flat=True)
-        for article_obj in articles:
-            if article_obj.content:
-                article_obj.content = article_obj.content[:100]
-            favorited = article_obj.id in favorited_list
-            article_obj.has_favorited = favorited
-            article_obj.image_urls = _parse_image_url(article_obj)
-            article_obj.author = article_obj.author
-            serialized_articles.append(article_obj)
-        return serialized_articles
+        print(f"Error refilling cache: {e}")
+
+
+async def _refill_recommend_cache(user_id: int, count: int = 30):
+    """异步包装：在线程池中运行同步任务"""
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(_executor, _refill_recommend_cache_sync, user_id, count)
+
+
+def _get_recommendations_sync(user_id: int, count: int):
+    """同步获取推荐"""
+    recommender = HybridMultimodalRecommender()
+    return recommender.recommend(user_id, top_k=count)
+
+
+@article.get("/recommendations", response_model=List[ArticleOutWithUserInfo])
+async def get_recommended_articles(
+        token: Annotated[str, Depends(oauth2_scheme)],
+        background_tasks: BackgroundTasks,
+        limit: int = Query(default=10, ge=1, le=50, description="返回的推荐文章数量"),
+):
+    user_id = _extract_user_id_from_token(token)
+    cache_key = f"recommend:user:{user_id}"
+
+    recommend_results = []
+    loop = asyncio.get_event_loop()
+
+    try:
+        # 1. 从Redis缓存中消费数据
+        cached_count = rt.llen(cache_key)
+        print(f"[DEBUG] Cache has {cached_count} items for user {user_id}")
+
+        for _ in range(limit):
+            item = rt.lpop(cache_key)
+            if item:
+                recommend_results.append(json.loads(item))
+
+        print(f"[DEBUG] Consumed {len(recommend_results)} items from cache")
+
+        # 2. 检查缓存是否需要补充（后台任务）
+        remaining_count = rt.llen(cache_key)
+        if remaining_count < 30:
+            print(f"[DEBUG] Cache low ({remaining_count}), adding background refill task")
+            background_tasks.add_task(_refill_recommend_cache, user_id, 30)
+
+        # 3. 如果缓存不够，在线程池中实时生成（避免阻塞事件循环）
+        if len(recommend_results) < limit:
+            needed = limit - len(recommend_results)
+            print(f"[DEBUG] Need {needed} more items, generating in thread pool")
+            additional = await loop.run_in_executor(_executor, _get_recommendations_sync, user_id, needed)
+            recommend_results.extend(additional)
+
+    except Exception as e:
+        print(f"Cache logic failed: {e}, falling back to real-time recommendation")
+        # 全部实时生成（在线程池中）
+        recommend_results = await loop.run_in_executor(_executor, _get_recommendations_sync, user_id, limit)
 
     # 从推荐结果中获取文章ID列表
     recommended_ids = [result["article_id"] for result in recommend_results] if recommend_results else []

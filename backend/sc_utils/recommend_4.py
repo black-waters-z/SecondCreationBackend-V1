@@ -509,6 +509,9 @@ class MatrixFactorizationRecommender:
 
         return recommendations
 
+# 全局模型缓存 - 单例模式
+_model_cache = {}
+
 # -----------------------------
 # 多模态双塔模型（DSSM）
 # -----------------------------
@@ -538,7 +541,21 @@ class DSSMRecommender:
         self._init_models()
 
     def _init_models(self):
-        """初始化预训练模型"""
+        """初始化预训练模型（单例模式）"""
+        global _model_cache
+        
+        # 检查缓存中是否已有模型
+        if _model_cache:
+            self.text_model = _model_cache['text_model']
+            self.image_model = _model_cache['image_model']
+            self.cross_encoder = _model_cache['cross_encoder']
+            self.device = _model_cache['device']
+            
+            # 如果缓存中没有预计算的物品嵌入，则重新计算
+            if not self.item_embeddings:
+                self._precompute_item_embeddings()
+            return
+        
         try:
             from sentence_transformers import SentenceTransformer, CrossEncoder
             from PIL import Image
@@ -551,6 +568,14 @@ class DSSMRecommender:
 
             # 预计算物品嵌入
             self._precompute_item_embeddings()
+            
+            # 将模型存入全局缓存
+            _model_cache = {
+                'text_model': self.text_model,
+                'image_model': self.image_model,
+                'cross_encoder': self.cross_encoder,
+                'device': self.device
+            }
 
         except ImportError as e:
             print(f"警告: 缺少必要的库，DSSM功能将受限: {e}")
@@ -715,12 +740,53 @@ class HybridMultimodalRecommender:
         self.content_rec = ContentBasedRecommender(self.articles)
         self.cf_rec = CollaborativeFilteringRecommender(self.behaviors)
         self.mf_rec = MatrixFactorizationRecommender(self.behaviors)
-        self.dssm_rec = None
+        self.dssm_rec = None  # DSSM模型延迟初始化
 
     def _init_dssm(self):
         """延迟初始化DSSM模型"""
         if not self.dssm_rec:
             self.dssm_rec = DSSMRecommender(self.articles, self.behaviors)
+
+    def _get_popular_articles(self, top_k=20):
+        """获取热门文章（基于浏览量、点赞数、收藏数排序）"""
+        print(f"[DEBUG] Getting popular articles, top_k={top_k}")
+        
+        # 从数据库获取文章统计信息
+        conn = sqlite3.connect(SQLITE_DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, title, subtitle, content, image_urls, view_count, like_count, favorite_count 
+            FROM articles 
+            WHERE status='published'
+            ORDER BY (view_count + like_count * 2 + favorite_count * 3) DESC
+            LIMIT ?
+        """, (top_k,))
+        rows = cursor.fetchall()
+        conn.close()
+        
+        detailed_results = []
+        for r in rows:
+            article_id = int(r[0])
+            # 列顺序: id, title, subtitle, content, image_urls, view_count, like_count, favorite_count
+            image_urls = json.loads(r[4]) if r[4] else []
+            detailed_results.append({
+                "article_id": article_id,
+                "score": 1.0,  # 热门文章默认分数
+                "score_detail": {
+                    "preference": 0,
+                    "content": 0,
+                    "cf": 0,
+                    "dssm": 0,
+                    "popular": 1.0
+                },
+                "title": r[1] or "N/A",
+                "subtitle": r[2] or "",
+                "content": (r[3] or "")[:100] + "..." if r[3] else "N/A",
+                "image_urls": image_urls
+            })
+        
+        print(f"[DEBUG] Returning {len(detailed_results)} popular articles")
+        return detailed_results
 
     def recommend(self, user_id, query=None, query_image_path=None, top_k=20,
                  alpha=0.3, beta=0.3, gamma=0.4, cf_method="model_based"):
@@ -792,9 +858,10 @@ class HybridMultimodalRecommender:
         for scores_dict in [norm_preference, norm_content, norm_cf, norm_dssm]:
             all_items.update(scores_dict.keys())
 
-        # 如果没有候选物品，返回空列表
+        # 如果没有候选物品（冷启动用户），返回热门文章
         if not all_items:
-            return []
+            print(f"[WARNING] No candidate items found for user {user_id}, returning popular articles")
+            return self._get_popular_articles(top_k)
 
         for item in all_items:
             score = 0.0

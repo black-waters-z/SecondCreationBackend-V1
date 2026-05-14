@@ -10,8 +10,7 @@ from tortoise.expressions import F, Q
 from backend.core.redis import rt
 from backend.sc_utils import _parse_image_url
 from backend.sc_utils.parse_url import _parse_list_urls
-from backend.sc_utils.recommend import hybrid_post_recommend
-from backend.sc_utils.recommend_3 import HybridMultimodalRecommender
+from backend.sc_utils.recommend_4 import HybridMultimodalRecommender as HybridMultimodalRecommenderV4
 from settings import APP_BASE_URL
 import jwt
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -406,16 +405,20 @@ async def create_view_history(
 _executor = ThreadPoolExecutor(max_workers=4)
 
 
-def _refill_recommend_cache_sync(user_id: int, count: int = 30):
+def _refill_recommend_cache_sync(user_id: int, count: int):
     """同步任务：补充推荐缓存"""
     try:
         cache_key = f"recommend:user:{user_id}"
-        recommender = HybridMultimodalRecommender()
+        recommender = HybridMultimodalRecommenderV4()
         recommend_results = recommender.recommend(user_id, top_k=count)
 
-        # 推入Redis List
+        # 推入Redis List - 只存储article_id和score
         for rec in recommend_results:
-            rt.rpush(cache_key, json.dumps(rec))
+            cache_item = {
+                "article_id": rec["article_id"],
+                "score": rec["score"]
+            }
+            rt.rpush(cache_key, json.dumps(cache_item))
 
         # 设置过期时间1小时
         rt.expire(cache_key, 3600)
@@ -432,8 +435,10 @@ async def _refill_recommend_cache(user_id: int, count: int = 30):
 
 def _get_recommendations_sync(user_id: int, count: int):
     """同步获取推荐"""
-    recommender = HybridMultimodalRecommender()
-    return recommender.recommend(user_id, top_k=count)
+    recommender = HybridMultimodalRecommenderV4()
+    recommend_results = recommender.recommend(user_id, top_k=count)
+    # 转换为与缓存格式一致的结构
+    return [{"article_id": rec["article_id"], "score": rec["score"]} for rec in recommend_results]
 
 
 @article.get("/recommendations", response_model=List[ArticleOutWithUserInfo])
@@ -615,7 +620,7 @@ async def get_filtered_articles(
 
 
 @article.get("/from_tag_get", response_model=List[ArticleOutWithUserInfo])
-async def list_articles(page: int = Query(default=1),
+async def list_articles_from_tag_get(page: int = Query(default=1),
                         order_by: str = Query(default="-total_score"),
                         peroid: str = Query(default="week"),
                         tag_id: str = Query(default=None)):

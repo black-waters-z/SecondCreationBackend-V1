@@ -404,11 +404,27 @@ async def create_view_history(
 # 创建线程池
 _executor = ThreadPoolExecutor(max_workers=4)
 
+# 用于防止重复填充缓存的锁
+_refill_locks = {}
+
 
 def _refill_recommend_cache_sync(user_id: int, count: int):
-    """同步任务：补充推荐缓存"""
+    """同步任务：补充推荐缓存（带锁防止重复填充）"""
+    # 使用锁防止同一用户的并发填充
+    if user_id in _refill_locks:
+        print(f"[DEBUG] Cache refill already in progress for user {user_id}, skipping")
+        return
+    
+    _refill_locks[user_id] = True
     try:
         cache_key = f"recommend:user:{user_id}"
+        
+        # 再次检查缓存数量，避免重复填充
+        current_count = rt.llen(cache_key)
+        if current_count >= 20:
+            print(f"[DEBUG] Cache already has {current_count} items for user {user_id}, skipping refill")
+            return
+        
         recommender = HybridMultimodalRecommenderV4()
         recommend_results = recommender.recommend(user_id, top_k=count)
 
@@ -425,6 +441,9 @@ def _refill_recommend_cache_sync(user_id: int, count: int):
         print(f"[DEBUG] Refilled cache for user {user_id}, added {len(recommend_results)} items")
     except Exception as e:
         print(f"Error refilling cache: {e}")
+    finally:
+        # 释放锁
+        _refill_locks.pop(user_id, None)
 
 
 async def _refill_recommend_cache(user_id: int, count: int = 30):
@@ -467,7 +486,7 @@ async def get_recommended_articles(
 
         # 2. 检查缓存是否需要补充（后台任务）
         remaining_count = rt.llen(cache_key)
-        if remaining_count < 30:
+        if remaining_count < 20:
             print(f"[DEBUG] Cache low ({remaining_count}), adding background refill task")
             background_tasks.add_task(_refill_recommend_cache, user_id, 30)
 

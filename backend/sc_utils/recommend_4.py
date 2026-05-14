@@ -886,7 +886,7 @@ class HybridMultimodalRecommender:
         # combined_scores = {aid: score for aid, score in combined_scores.items() if aid not in user_articles}
 
         # 排序
-        final_results = sorted(combined_scores.items(), key=lambda x: x[1], reverse=True)[:top_k * 2]  # 取2倍数量用于精排
+        final_results = sorted(combined_scores.items(), key=lambda x: x[1], reverse=True)[:top_k]  # 取top_k条
         
         # 使用Cross-Encoder进行精排（仅当有查询时）
         if query and self.dssm_rec and hasattr(self.dssm_rec, 'rerank_with_cross_encoder'):

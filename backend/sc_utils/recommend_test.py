@@ -417,8 +417,8 @@ def main():
     parser = argparse.ArgumentParser(description="多模态推荐系统离线评估")
     parser.add_argument('--test-ratio', type=float, default=0.2,
                        help='测试集比例 (default: 0.2)')
-    parser.add_argument('--top-k', type=int, default=30,
-                       help='推荐数量 (default: 30)')
+    parser.add_argument('--top-k', type=int, default=10,
+                       help='推荐数量 (default: 10)')
     parser.add_argument('--seed', type=int, default=42,
                        help='随机种子 (default: 42)')
     

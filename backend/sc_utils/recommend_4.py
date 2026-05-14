@@ -78,7 +78,20 @@ def load_user_behaviors():
 # 基于内容的推荐（Scikit-learn TF-IDF）
 # -----------------------------
 class ContentBasedRecommender:
-    """基于内容的推荐器 - 使用Scikit-learn TF-IDF"""
+    """
+    基于内容的推荐器 - 使用Scikit-learn TF-IDF
+    
+    算法设计思路：
+    1. 为什么用TF-IDF：TF-IDF能有效提取文本特征，衡量词语在文档中的重要性
+    2. 为什么用余弦相似度：余弦相似度适合衡量高维向量（如文本特征向量）之间的相似性
+    3. 为什么要预处理：去除停用词和标点能减少噪声，提高特征质量
+    4. 为什么要构建物品画像：物品画像能将非结构化文本转化为结构化特征，便于计算相似度
+    
+    解决的问题：
+    - 冷启动问题：不需要用户行为数据，仅基于物品内容即可推荐
+    - 兴趣漂移：能快速捕捉物品的最新内容特征
+    - 解释性强：推荐结果可以通过内容相似性进行解释
+    """
 
     def __init__(self, articles=None):
         self.articles = articles if articles else load_articles()
@@ -138,7 +151,22 @@ class ContentBasedRecommender:
 # 协同过滤推荐（Scikit-learn优化）
 # -----------------------------
 class CollaborativeFilteringRecommender:
-    """协同过滤推荐器 - 使用Scikit-learn相似度计算"""
+    """
+    协同过滤推荐器 - 支持基于用户的协同过滤和基于物品的协同过滤
+    
+    算法设计思路：
+    1. 为什么分用户和物品两种：
+       - 基于用户的协同过滤：适合用户数较少的场景，能发现用户的兴趣相似性
+       - 基于物品的协同过滤：适合物品数较少的场景，计算更稳定
+    2. 为什么用余弦相似度：余弦相似度能有效衡量用户兴趣或物品特征的相似性
+    3. 为什么要构建用户-物品矩阵：矩阵化表示便于进行相似度计算和推荐
+    4. 为什么要限制邻居数量：避免噪声用户/物品的影响，提高推荐精度
+    
+    解决的问题：
+    - 发现潜在兴趣：能基于用户行为发现用户自己可能都没意识到的兴趣
+    - 多样性推荐：能推荐用户没有接触过但兴趣相似的内容
+    - 无需内容特征：仅基于用户行为数据即可推荐，不依赖物品内容分析
+    """
 
     def __init__(self, behaviors=None):
         self.behaviors = behaviors if behaviors else load_user_behaviors()
@@ -195,6 +223,170 @@ class CollaborativeFilteringRecommender:
         # 返回Top-K推荐
         sorted_scores = sorted(scores.items(), key=lambda x: x[1], reverse=True)[:top_k]
         return dict(sorted_scores)
+    
+    def rerank_with_cross_encoder(self, query, candidates, top_k=10):
+        """
+        使用Cross-Encoder进行精排
+        :param query: 查询文本
+        :param candidates: 粗排候选列表，格式为{article_id: score}
+        :param top_k: 精排后返回的数量
+        :return: 精排后的推荐列表，格式为{article_id: cross_encoder_score}
+        """
+        if not self.cross_encoder or not query or not candidates:
+            return candidates
+        
+        # 准备候选文章的文本内容
+        candidate_pairs = []
+        article_ids = list(candidates.keys())
+        
+        for article_id in article_ids:
+            article = next((a for a in self.articles if a['article_id'] == article_id), None)
+            if article:
+                full_text = f"{article['title']} {article['subtitle']} {article['content']}"
+                candidate_pairs.append([query, full_text])
+            else:
+                candidate_pairs.append([query, ""])
+        
+        # 使用Cross-Encoder计算精排得分
+        cross_scores = self.cross_encoder.predict(candidate_pairs)
+        
+        # 归一化得分
+        min_score = min(cross_scores)
+        max_score = max(cross_scores)
+        if max_score - min_score > 1e-6:
+            cross_scores = (cross_scores - min_score) / (max_score - min_score)
+        else:
+            cross_scores = [0.5] * len(cross_scores)
+        
+        # 构建精排结果
+        reranked = {article_ids[i]: float(cross_scores[i]) for i in range(len(article_ids))}
+        
+        # 排序并返回Top-K
+        sorted_reranked = sorted(reranked.items(), key=lambda x: x[1], reverse=True)[:top_k]
+        return dict(sorted_reranked)
+    
+    def rerank_with_cross_encoder(self, query, candidates, top_k=10):
+        """
+        使用Cross-Encoder进行精排
+        :param query: 查询文本
+        :param candidates: 粗排候选列表，格式为{article_id: score}
+        :param top_k: 精排后返回的数量
+        :return: 精排后的推荐列表，格式为{article_id: cross_encoder_score}
+        """
+        if not self.cross_encoder or not query or not candidates:
+            return candidates
+        
+        # 准备候选文章的文本内容
+        candidate_pairs = []
+        article_ids = list(candidates.keys())
+        
+        for article_id in article_ids:
+            article = next((a for a in self.articles if a['article_id'] == article_id), None)
+            if article:
+                full_text = f"{article['title']} {article['subtitle']} {article['content']}"
+                candidate_pairs.append([query, full_text])
+            else:
+                candidate_pairs.append([query, ""])
+        
+        # 使用Cross-Encoder计算精排得分
+        cross_scores = self.cross_encoder.predict(candidate_pairs)
+        
+        # 归一化得分
+        min_score = min(cross_scores)
+        max_score = max(cross_scores)
+        if max_score - min_score > 1e-6:
+            cross_scores = (cross_scores - min_score) / (max_score - min_score)
+        else:
+            cross_scores = [0.5] * len(cross_scores)
+        
+        # 构建精排结果
+        reranked = {article_ids[i]: float(cross_scores[i]) for i in range(len(article_ids))}
+        
+        # 排序并返回Top-K
+        sorted_reranked = sorted(reranked.items(), key=lambda x: x[1], reverse=True)[:top_k]
+        return dict(sorted_reranked)
+    
+    def rerank_with_cross_encoder(self, query, candidates, top_k=10):
+        """
+        使用Cross-Encoder进行精排
+        :param query: 查询文本
+        :param candidates: 粗排候选列表，格式为{article_id: score}
+        :param top_k: 精排后返回的数量
+        :return: 精排后的推荐列表，格式为{article_id: cross_encoder_score}
+        """
+        if not self.cross_encoder or not query or not candidates:
+            return candidates
+        
+        # 准备候选文章的文本内容
+        candidate_pairs = []
+        article_ids = list(candidates.keys())
+        
+        for article_id in article_ids:
+            article = next((a for a in self.articles if a['article_id'] == article_id), None)
+            if article:
+                full_text = f"{article['title']} {article['subtitle']} {article['content']}"
+                candidate_pairs.append([query, full_text])
+            else:
+                candidate_pairs.append([query, ""])
+        
+        # 使用Cross-Encoder计算精排得分
+        cross_scores = self.cross_encoder.predict(candidate_pairs)
+        
+        # 归一化得分
+        min_score = min(cross_scores)
+        max_score = max(cross_scores)
+        if max_score - min_score > 1e-6:
+            cross_scores = (cross_scores - min_score) / (max_score - min_score)
+        else:
+            cross_scores = [0.5] * len(cross_scores)
+        
+        # 构建精排结果
+        reranked = {article_ids[i]: float(cross_scores[i]) for i in range(len(article_ids))}
+        
+        # 排序并返回Top-K
+        sorted_reranked = sorted(reranked.items(), key=lambda x: x[1], reverse=True)[:top_k]
+        return dict(sorted_reranked)
+    
+    def rerank_with_cross_encoder(self, query, candidates, top_k=10):
+        """
+        使用Cross-Encoder进行精排
+        :param query: 查询文本
+        :param candidates: 粗排候选列表，格式为{article_id: score}
+        :param top_k: 精排后返回的数量
+        :return: 精排后的推荐列表，格式为{article_id: cross_encoder_score}
+        """
+        if not self.cross_encoder or not query or not candidates:
+            return candidates
+        
+        # 准备候选文章的文本内容
+        candidate_pairs = []
+        article_ids = list(candidates.keys())
+        
+        for article_id in article_ids:
+            article = next((a for a in self.articles if a['article_id'] == article_id), None)
+            if article:
+                full_text = f"{article['title']} {article['subtitle']} {article['content']}"
+                candidate_pairs.append([query, full_text])
+            else:
+                candidate_pairs.append([query, ""])
+        
+        # 使用Cross-Encoder计算精排得分
+        cross_scores = self.cross_encoder.predict(candidate_pairs)
+        
+        # 归一化得分
+        min_score = min(cross_scores)
+        max_score = max(cross_scores)
+        if max_score - min_score > 1e-6:
+            cross_scores = (cross_scores - min_score) / (max_score - min_score)
+        else:
+            cross_scores = [0.5] * len(cross_scores)
+        
+        # 构建精排结果
+        reranked = {article_ids[i]: float(cross_scores[i]) for i in range(len(article_ids))}
+        
+        # 排序并返回Top-K
+        sorted_reranked = sorted(reranked.items(), key=lambda x: x[1], reverse=True)[:top_k]
+        return dict(sorted_reranked)
 
     def item_based_cf(self, user_id, top_k=20, k_items=5):
         """基于物品的协同过滤 - 使用Scikit-learn余弦相似度"""
@@ -233,7 +425,22 @@ class CollaborativeFilteringRecommender:
 # 矩阵分解推荐（Scikit-learn NMF）
 # -----------------------------
 class MatrixFactorizationRecommender:
-    """矩阵分解推荐器 - 使用Scikit-learn NMF"""
+    """
+    矩阵分解推荐器 - 使用Scikit-learn NMF（非负矩阵分解）
+    
+    算法设计思路：
+    1. 为什么用NMF：NMF能将用户-物品矩阵分解为用户隐特征和物品隐特征矩阵，
+       适合处理稀疏数据，且分解结果具有可解释性
+    2. 为什么要设置n_components：隐特征数量需要根据数据规模和领域知识调整，
+       过少会丢失信息，过多会导致过拟合
+    3. 为什么要构建用户-物品矩阵：矩阵化表示便于进行矩阵分解和推荐
+    4. 为什么要排除已交互物品：避免推荐用户已经看过的内容，提高推荐新颖性
+    
+    解决的问题：
+    - 数据稀疏性：能有效处理用户-物品矩阵的稀疏问题，挖掘潜在特征
+    - 可解释性：隐特征矩阵能反映用户和物品的潜在兴趣/属性
+    - 扩展性：能处理大规模用户和物品数据，计算效率较高
+    """
 
     def __init__(self, behaviors=None, n_components=20):
         self.behaviors = behaviors if behaviors else load_user_behaviors()
@@ -306,7 +513,22 @@ class MatrixFactorizationRecommender:
 # 多模态双塔模型（DSSM）
 # -----------------------------
 class DSSMRecommender:
-    """多模态双塔推荐器 - 保留原实现"""
+    """
+    多模态双塔推荐器（DSSM）- 支持文本和图片的多模态推荐
+    
+    算法设计思路：
+    1. 为什么用DSSM：深度语义模型能学习到用户和物品的深层语义特征，
+       适合处理多模态数据（文本+图片）
+    2. 为什么要分文本和图片处理：不同模态的数据需要不同的特征提取方法，
+       文本用TF-IDF，图片用预训练CNN模型
+    3. 为什么要融合多模态特征：融合能更全面地表示物品特征，提高推荐精度
+    4. 为什么要预计算嵌入向量：预计算能提高推荐速度，避免实时计算的延迟
+    
+    解决的问题：
+    - 多模态数据处理：能同时处理文本和图片数据，适合富媒体内容推荐
+    - 语义理解：能理解内容的深层语义，而不仅仅是表面特征
+    - 跨模态推荐：能基于文本查询推荐图片内容，或基于图片推荐相关内容
+    """
 
     def __init__(self, articles=None, behaviors=None):
         self.articles = articles if articles else load_articles()
@@ -318,12 +540,13 @@ class DSSMRecommender:
     def _init_models(self):
         """初始化预训练模型"""
         try:
-            from sentence_transformers import SentenceTransformer
+            from sentence_transformers import SentenceTransformer, CrossEncoder
             from PIL import Image
             import torch
 
             self.text_model = SentenceTransformer('all-MiniLM-L6-v2')
             self.image_model = SentenceTransformer('clip-ViT-B-32')
+            self.cross_encoder = CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
             self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
             # 预计算物品嵌入
@@ -333,6 +556,7 @@ class DSSMRecommender:
             print(f"警告: 缺少必要的库，DSSM功能将受限: {e}")
             self.text_model = None
             self.image_model = None
+            self.cross_encoder = None
 
     def _precompute_item_embeddings(self):
         """预计算所有物品的嵌入向量"""
@@ -465,7 +689,23 @@ class DSSMRecommender:
 # 混合推荐器
 # -----------------------------
 class HybridMultimodalRecommender:
-    """多模态混合推荐器"""
+    """
+    多模态混合推荐器 - 整合多种推荐算法的优势
+    
+    算法设计思路：
+    1. 为什么要混合多种算法：不同算法有不同的优势和适用场景，
+       混合能弥补单一算法的缺陷，提高推荐精度
+    2. 为什么要归一化处理：不同算法的得分量级和范围不同，
+       归一化能确保各算法在融合时具备同等权重基础
+    3. 为什么要动态加权：根据是否有查询词动态调整各算法的权重，
+       有查询时更侧重内容推荐，无查询时更侧重协同过滤
+    4. 为什么要延迟初始化DSSM：DSSM模型初始化耗时较长，延迟初始化能提高系统启动速度
+    
+    解决的问题：
+    - 单一算法缺陷：弥补单一算法的不足，提高推荐的准确性和多样性
+    - 冷启动问题：结合内容推荐和协同过滤，能更好地处理新用户和新物品
+    - 适应性强：能根据不同场景动态调整推荐策略
+    """
 
     def __init__(self):
         self.articles = load_articles()
@@ -579,7 +819,16 @@ class HybridMultimodalRecommender:
         # combined_scores = {aid: score for aid, score in combined_scores.items() if aid not in user_articles}
 
         # 排序
-        final_results = sorted(combined_scores.items(), key=lambda x: x[1], reverse=True)[:top_k]
+        final_results = sorted(combined_scores.items(), key=lambda x: x[1], reverse=True)[:top_k * 2]  # 取2倍数量用于精排
+        
+        # 使用Cross-Encoder进行精排（仅当有查询时）
+        if query and self.dssm_rec and hasattr(self.dssm_rec, 'rerank_with_cross_encoder'):
+            # 转换为字典格式
+            candidates_dict = dict(final_results)
+            # 精排
+            reranked_results = self.dssm_rec.rerank_with_cross_encoder(query, candidates_dict, top_k=top_k)
+            # 转换回列表格式
+            final_results = list(reranked_results.items())
 
         # 获取详细信息
         article_info = {article['article_id']: article for article in self.articles}

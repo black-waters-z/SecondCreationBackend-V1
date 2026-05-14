@@ -210,15 +210,20 @@ def mean_reciprocal_rank(recommended, ground_truth):
 # 完整评估流程
 # -----------------------------
 
-def evaluate_recommender(hybrid_rec, test_behaviors, top_k=30):
+def evaluate_recommender(hybrid_rec, test_behaviors, top_k=30, alpha=0.4, delta=0.4, beta=0.1, gamma=0.1):
+    print(f"评估推荐器性能，参数: alpha={alpha}, delta={delta}, beta={beta}, gamma={gamma}, top_k={top_k}")
     """
     评估推荐系统性能
-    
+
     Args:
         hybrid_rec (HybridMultimodalRecommender): 混合推荐器实例
         test_behaviors (dict): 测试集用户行为
         top_k (int): 推荐数量
-    
+        alpha (float): 内容推荐的权重
+        delta (float): 偏好推荐的权重
+        beta (float): 协同过滤推荐的权重
+        gamma (float): DSSM多模态推荐的权重
+
     Returns:
         dict: 评估指标结果
     """
@@ -243,13 +248,14 @@ def evaluate_recommender(hybrid_rec, test_behaviors, top_k=30):
         try:
             # 获取推荐结果
             results = hybrid_rec.recommend(
-                user_id, 
-                query=None, 
-                query_image_path=None, 
+                user_id,
+                query=None,
+                query_image_path=None,
                 top_k=top_k,
-                alpha=0.5, 
-                beta=0.3, 
-                gamma=0.2,
+                alpha=alpha,
+                delta=delta,
+                beta=beta,
+                gamma=gamma,
                 cf_method="model_based"
             )
             recommended_ids = [r['article_id'] for r in results]
@@ -290,6 +296,35 @@ def evaluate_recommender(hybrid_rec, test_behaviors, top_k=30):
     print(f"\n完成评估，共评估 {evaluated_users} 个用户")
     
     return avg_metrics, evaluated_users
+
+
+def create_parameter_grid():
+    """
+    创建参数网格用于遍历测试
+
+    Returns:
+        list: 参数组合列表，每个元素为 (alpha, delta, beta, gamma) 元组
+    """
+    parameter_grid = []
+
+    # 定义各参数的取值范围
+    alphas = [0.1, 0.2, 0.3, 0.4, 0.5]  # 内容推荐权重
+    deltas = [0.1, 0.2, 0.3, 0.4, 0.5]  # 偏好推荐权重
+    betas = [0.1, 0.2, 0.3]             # 协同过滤权重
+    gammas = [0.1, 0.2, 0.3]             # DSSM多模态权重
+
+    # 生成所有可能的参数组合
+    for alpha in alphas:
+        for delta in deltas:
+            for beta in betas:
+                for gamma in gammas:
+                    # 确保权重总和为1.0
+                    total = alpha + delta + beta + gamma
+                    if abs(total - 1.0) < 0.01:  # 允许小的浮点误差
+                        parameter_grid.append((alpha, delta, beta, gamma))
+
+    print(f"生成 {len(parameter_grid)} 组有效参数组合")
+    return parameter_grid
 
 
 def run_offline_evaluation(test_ratio=0.2, top_k=30, seed=42):
@@ -366,45 +401,109 @@ def run_offline_evaluation(test_ratio=0.2, top_k=30, seed=42):
     # 评估推荐器
     print("\n4. 评估推荐系统...")
     print(f"将对 {len(test_behaviors)} 个用户进行评估")
-    
-    metrics, evaluated_users = evaluate_recommender(hybrid_rec, test_behaviors, top_k)
-    
-    # 打印结果
-    print("\n" + "=" * 80)
-    print("离线评估结果")
-    print("=" * 80)
-    print(f"评估用户数: {evaluated_users}")
-    print(f"推荐数量: {top_k}")
-    print()
-    print(f"Precision@{top_k}: {metrics['precision@k']:.4f}")
-    print(f"Recall@{top_k}: {metrics['recall@k']:.4f}")
-    print(f"F1@{top_k}: {metrics['f1@k']:.4f}")
-    print(f"MAP: {metrics['map']:.4f}")
-    print(f"NDCG@{top_k}: {metrics['ndcg@k']:.4f}")
-    print(f"MRR: {metrics['mrr']:.4f}")
-    
-    # 保存结果
-    result_file = f"evaluation_results_top{top_k}.txt"
-    with open(result_file, 'w', encoding='utf-8') as f:
-        f.write("多模态推荐系统 - 离线评估结果\n")
-        f.write("=" * 60 + "\n")
+
+    # 创建参数网格
+    parameter_grid = create_parameter_grid()
+
+    # 结果保存文件
+    result_file = f"test.txt"
+
+    # 遍历所有参数组合
+    all_results = []
+    for i, (alpha, delta, beta, gamma) in enumerate(parameter_grid, 1):
+        print(f"\n{'='*60}")
+        print(f"测试第 {i}/{len(parameter_grid)} 组参数:")
+        print(f"alpha(内容)={alpha}, delta(偏好)={delta}, beta(CF)={beta}, gamma(DSSM)={gamma}")
+        print(f"{'='*60}")
+
         try:
-            import pandas as pd
-            f.write(f"评估时间: {pd.Timestamp.now()}\n")
-        except ImportError:
-            f.write("评估时间: (pandas未安装)\n")
-        f.write(f"评估用户数: {evaluated_users}\n")
-        f.write(f"推荐数量: {top_k}\n\n")
-        f.write(f"Precision@{top_k}: {metrics['precision@k']:.4f}\n")
-        f.write(f"Recall@{top_k}: {metrics['recall@k']:.4f}\n")
-        f.write(f"F1@{top_k}: {metrics['f1@k']:.4f}\n")
-        f.write(f"MAP: {metrics['map']:.4f}\n")
-        f.write(f"NDCG@{top_k}: {metrics['ndcg@k']:.4f}\n")
-        f.write(f"MRR: {metrics['mrr']:.4f}\n")
-    
-    print(f"\n评估结果已保存到文件: {result_file}")
-    
-    return metrics
+            # 评估当前参数组合
+            metrics, evaluated_users = evaluate_recommender(
+                hybrid_rec, test_behaviors, top_k, alpha, delta, beta, gamma
+            )
+
+            # 保存结果到列表
+            result_entry = {
+                'alpha': alpha,
+                'delta': delta,
+                'beta': beta,
+                'gamma': gamma,
+                'evaluated_users': evaluated_users,
+                'precision': metrics['precision@k'],
+                'recall': metrics['recall@k'],
+                'f1': metrics['f1@k'],
+                'map': metrics['map'],
+                'ndcg': metrics['ndcg@k'],
+                'mrr': metrics['mrr']
+            }
+            all_results.append(result_entry)
+
+            # 追加写入文件
+            with open(result_file, 'a', encoding='utf-8') as f:
+                f.write(f"\n{'='*80}\n")
+                f.write(f"参数组合 {i}/{len(parameter_grid)}: ")
+                f.write(f"alpha={alpha}, delta={delta}, beta={beta}, gamma={gamma}\n")
+                f.write(f"{'='*80}\n")
+                f.write(f"评估用户数: {evaluated_users}\n")
+                f.write(f"推荐数量: {top_k}\n")
+                f.write(f"Precision@{top_k}: {metrics['precision@k']:.4f}\n")
+                f.write(f"Recall@{top_k}: {metrics['recall@k']:.4f}\n")
+                f.write(f"F1@{top_k}: {metrics['f1@k']:.4f}\n")
+                f.write(f"MAP: {metrics['map']:.4f}\n")
+                f.write(f"NDCG@{top_k}: {metrics['ndcg@k']:.4f}\n")
+                f.write(f"MRR: {metrics['mrr']:.4f}\n")
+
+            print(f"✓ 第 {i} 组参数测试完成，结果已保存")
+
+        except Exception as e:
+            print(f"✗ 第 {i} 组参数测试失败: {e}")
+            with open(result_file, 'a', encoding='utf-8') as f:
+                f.write(f"\n{'='*80}\n")
+                f.write(f"参数组合 {i}/{len(parameter_grid)}: ")
+                f.write(f"alpha={alpha}, delta={delta}, beta={beta}, gamma={gamma}\n")
+                f.write(f"{'='*80}\n")
+                f.write(f"测试失败: {e}\n")
+            continue
+
+    # 找出最佳参数组合
+    if all_results:
+        best_by_f1 = max(all_results, key=lambda x: x['f1'])
+        best_by_ndcg = max(all_results, key=lambda x: x['ndcg'])
+
+        # 保存总结
+        with open(result_file, 'a', encoding='utf-8') as f:
+            f.write(f"\n{'='*80}\n")
+            f.write("参数调优总结\n")
+            f.write(f"{'='*80}\n")
+            f.write(f"测试完成时间: ")
+            try:
+                import pandas as pd
+                f.write(f"{pd.Timestamp.now()}\n")
+            except ImportError:
+                f.write(f"(pandas未安装)\n")
+            f.write(f"总参数组合数: {len(parameter_grid)}\n")
+            f.write(f"成功测试组合数: {len(all_results)}\n\n")
+
+            f.write("最佳参数组合 (按F1分数):\n")
+            f.write(f"  alpha={best_by_f1['alpha']}, delta={best_by_f1['delta']}, ")
+            f.write(f"beta={best_by_f1['beta']}, gamma={best_by_f1['gamma']}\n")
+            f.write(f"  F1@{top_k}: {best_by_f1['f1']:.4f}\n")
+            f.write(f"  NDCG@{top_k}: {best_by_f1['ndcg']:.4f}\n\n")
+
+            f.write("最佳参数组合 (按NDCG分数):\n")
+            f.write(f"  alpha={best_by_ndcg['alpha']}, delta={best_by_ndcg['delta']}, ")
+            f.write(f"beta={best_by_ndcg['beta']}, gamma={best_by_ndcg['gamma']}\n")
+            f.write(f"  F1@{top_k}: {best_by_ndcg['f1']:.4f}\n")
+            f.write(f"  NDCG@{top_k}: {best_by_ndcg['ndcg']:.4f}\n")
+
+        print(f"\n{'='*80}")
+        print("参数调优完成!")
+        print(f"最佳参数组合 (F1): alpha={best_by_f1['alpha']}, delta={best_by_f1['delta']}, beta={best_by_f1['beta']}, gamma={best_by_f1['gamma']}")
+        print(f"最佳F1分数: {best_by_f1['f1']:.4f}")
+        print(f"结果已保存到: {result_file}")
+        print(f"{'='*80}")
+
+    return all_results
 
 
 # -----------------------------
@@ -431,14 +530,14 @@ def main():
     print()
     
     # 运行评估
-    metrics = run_offline_evaluation(
-        test_ratio=args.test_ratio, 
-        top_k=args.top_k, 
+    results = run_offline_evaluation(
+        test_ratio=args.test_ratio,
+        top_k=args.top_k,
         seed=args.seed
     )
-    
-    if metrics:
-        print("\n评估完成!")
+
+    if results:
+        print("\n参数调优评估完成!")
     else:
         print("\n评估失败!")
         exit(1)

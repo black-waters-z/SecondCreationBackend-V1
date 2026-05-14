@@ -168,8 +168,10 @@ class CollaborativeFilteringRecommender:
     - 无需内容特征：仅基于用户行为数据即可推荐，不依赖物品内容分析
     """
 
-    def __init__(self, behaviors=None):
+    def __init__(self, behaviors=None, articles=None, cross_encoder=None):
         self.behaviors = behaviors if behaviors else load_user_behaviors()
+        self.articles = articles if articles else load_articles()
+        self.cross_encoder = cross_encoder
         self.user_item_matrix = None
         self.user_index = {}
         self.item_index = {}
@@ -264,129 +266,7 @@ class CollaborativeFilteringRecommender:
         # 排序并返回Top-K
         sorted_reranked = sorted(reranked.items(), key=lambda x: x[1], reverse=True)[:top_k]
         return dict(sorted_reranked)
-    
-    def rerank_with_cross_encoder(self, query, candidates, top_k=10):
-        """
-        使用Cross-Encoder进行精排
-        :param query: 查询文本
-        :param candidates: 粗排候选列表，格式为{article_id: score}
-        :param top_k: 精排后返回的数量
-        :return: 精排后的推荐列表，格式为{article_id: cross_encoder_score}
-        """
-        if not self.cross_encoder or not query or not candidates:
-            return candidates
-        
-        # 准备候选文章的文本内容
-        candidate_pairs = []
-        article_ids = list(candidates.keys())
-        
-        for article_id in article_ids:
-            article = next((a for a in self.articles if a['article_id'] == article_id), None)
-            if article:
-                full_text = f"{article['title']} {article['subtitle']} {article['content']}"
-                candidate_pairs.append([query, full_text])
-            else:
-                candidate_pairs.append([query, ""])
-        
-        # 使用Cross-Encoder计算精排得分
-        cross_scores = self.cross_encoder.predict(candidate_pairs)
-        
-        # 归一化得分
-        min_score = min(cross_scores)
-        max_score = max(cross_scores)
-        if max_score - min_score > 1e-6:
-            cross_scores = (cross_scores - min_score) / (max_score - min_score)
-        else:
-            cross_scores = [0.5] * len(cross_scores)
-        
-        # 构建精排结果
-        reranked = {article_ids[i]: float(cross_scores[i]) for i in range(len(article_ids))}
-        
-        # 排序并返回Top-K
-        sorted_reranked = sorted(reranked.items(), key=lambda x: x[1], reverse=True)[:top_k]
-        return dict(sorted_reranked)
-    
-    def rerank_with_cross_encoder(self, query, candidates, top_k=10):
-        """
-        使用Cross-Encoder进行精排
-        :param query: 查询文本
-        :param candidates: 粗排候选列表，格式为{article_id: score}
-        :param top_k: 精排后返回的数量
-        :return: 精排后的推荐列表，格式为{article_id: cross_encoder_score}
-        """
-        if not self.cross_encoder or not query or not candidates:
-            return candidates
-        
-        # 准备候选文章的文本内容
-        candidate_pairs = []
-        article_ids = list(candidates.keys())
-        
-        for article_id in article_ids:
-            article = next((a for a in self.articles if a['article_id'] == article_id), None)
-            if article:
-                full_text = f"{article['title']} {article['subtitle']} {article['content']}"
-                candidate_pairs.append([query, full_text])
-            else:
-                candidate_pairs.append([query, ""])
-        
-        # 使用Cross-Encoder计算精排得分
-        cross_scores = self.cross_encoder.predict(candidate_pairs)
-        
-        # 归一化得分
-        min_score = min(cross_scores)
-        max_score = max(cross_scores)
-        if max_score - min_score > 1e-6:
-            cross_scores = (cross_scores - min_score) / (max_score - min_score)
-        else:
-            cross_scores = [0.5] * len(cross_scores)
-        
-        # 构建精排结果
-        reranked = {article_ids[i]: float(cross_scores[i]) for i in range(len(article_ids))}
-        
-        # 排序并返回Top-K
-        sorted_reranked = sorted(reranked.items(), key=lambda x: x[1], reverse=True)[:top_k]
-        return dict(sorted_reranked)
-    
-    def rerank_with_cross_encoder(self, query, candidates, top_k=10):
-        """
-        使用Cross-Encoder进行精排
-        :param query: 查询文本
-        :param candidates: 粗排候选列表，格式为{article_id: score}
-        :param top_k: 精排后返回的数量
-        :return: 精排后的推荐列表，格式为{article_id: cross_encoder_score}
-        """
-        if not self.cross_encoder or not query or not candidates:
-            return candidates
-        
-        # 准备候选文章的文本内容
-        candidate_pairs = []
-        article_ids = list(candidates.keys())
-        
-        for article_id in article_ids:
-            article = next((a for a in self.articles if a['article_id'] == article_id), None)
-            if article:
-                full_text = f"{article['title']} {article['subtitle']} {article['content']}"
-                candidate_pairs.append([query, full_text])
-            else:
-                candidate_pairs.append([query, ""])
-        
-        # 使用Cross-Encoder计算精排得分
-        cross_scores = self.cross_encoder.predict(candidate_pairs)
-        
-        # 归一化得分
-        min_score = min(cross_scores)
-        max_score = max(cross_scores)
-        if max_score - min_score > 1e-6:
-            cross_scores = (cross_scores - min_score) / (max_score - min_score)
-        else:
-            cross_scores = [0.5] * len(cross_scores)
-        
-        # 构建精排结果
-        reranked = {article_ids[i]: float(cross_scores[i]) for i in range(len(article_ids))}
-        
-        # 排序并返回Top-K
-        sorted_reranked = sorted(reranked.items(), key=lambda x: x[1], reverse=True)[:top_k]
-        return dict(sorted_reranked)
+
 
     def item_based_cf(self, user_id, top_k=20, k_items=5):
         """基于物品的协同过滤 - 使用Scikit-learn余弦相似度"""
@@ -789,7 +669,7 @@ class HybridMultimodalRecommender:
         return detailed_results
 
     def recommend(self, user_id, query=None, query_image_path=None, top_k=20,
-                 alpha=0.3, beta=0.3, gamma=0.4, cf_method="model_based"):
+                 alpha=0.3, delta=0.3, beta=0.3, gamma=0.4, cf_method="model_based"):
         """混合推荐"""
         # 1. 基于内容的推荐
         if query:
@@ -866,15 +746,15 @@ class HybridMultimodalRecommender:
         for item in all_items:
             score = 0.0
             if query:
-                # 有query时，使用偏好推荐+内容推荐 - 已调低保真推荐权重
+                # 有query时，使用偏好推荐+内容推荐
                 if item in norm_preference:
-                    score += norm_preference[item] * alpha * 0.2  # 从0.5调至0.2
+                    score += norm_preference[item] * delta  # 偏好推荐权重使用 delta
                 if item in norm_content:
-                    score += norm_content[item] * alpha * 0.8  # 从0.5调至0.8
+                    score += norm_content[item] * alpha  # 内容推荐权重使用 alpha
             else:
-                # 没有query时，直接使用偏好推荐 - 已调低保真推荐权重
+                # 没有query时，直接使用偏好推荐
                 if item in norm_preference:
-                    score += norm_preference[item] * alpha * 0.3  # 从1.0调至0.3
+                    score += norm_preference[item] * delta  # 偏好推荐权重使用 delta
             if item in norm_cf:
                 score += norm_cf[item] * beta
             if item in norm_dssm:
@@ -940,8 +820,8 @@ if __name__ == "__main__":
     print("\n" + "=" * 60)
     print("混合推荐（内容 + 协同过滤 + 矩阵分解 + 多模态双塔）...")
     hybrid_rec = HybridMultimodalRecommender()
-    results = hybrid_rec.recommend(user_id, query, query_image_path, top_k=10,
-                                   alpha=0.2, beta=0.3, gamma=0.5,
+    results = hybrid_rec.recommend(user_id, query, query_image_path, top_k=5,
+                                   alpha=0.3, delta=0.3, beta=0.1, gamma=0.6,
                                    cf_method="model_based")
 
     print("\n推荐结果:")

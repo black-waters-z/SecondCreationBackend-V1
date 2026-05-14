@@ -75,13 +75,11 @@ async def import_csv_to_db(csv_path: str, db_url: str):
     # 关闭连接
     await Tortoise.close_connections()
 
-
-# ====================== 执行导入 ======================
 if __name__ == "__main__":
     # 配置参数
-    CSV_FILE_PATH = r"D:\Project\SecondCreationBackend-V1\xiaohongshu_notes.csv"
+    CSV_FILE_PATH = r"D:\projects\SecondCreationBackend-V1\xiaohongshu_notes.csv"
     # 替换为你的数据库连接 URL（SQLite 示例，其他数据库需调整）
-    DB_URL = "sqlite://D:/Project/SecondCreationBackend-V1/scforum.db"
+    DB_URL = "sqlite://D:/projects/SecondCreationBackend-V1/scforum.db"
 
     # 运行异步任务
     run_async(import_csv_to_db(CSV_FILE_PATH, DB_URL))

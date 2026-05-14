@@ -17,8 +17,8 @@ import numpy as np
 # -----------------------------
 # 配置
 # -----------------------------
-SQLITE_DB_PATH = r"D:\Project\SecondCreationBackend-V1\scforum.db"
-IMAGE_ROOT_DIR = r"D:\Project\SecondCreationBackend-V1\backend\static\upload_IMG"
+SQLITE_DB_PATH = r"D:\projects\SecondCreationBackend-V1\scforum.db"
+IMAGE_ROOT_DIR = r"D:\projects\SecondCreationBackend-V1\backend\static\upload_IMG"
 
 # HuggingFace Token - 用于认证请求，提高下载速度和速率限制
 # 可以通过环境变量 HF_TOKEN 设置，或在此处直接设置

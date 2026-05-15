@@ -519,6 +519,10 @@ async def get_recommended_articles(
                 .prefetch_related("tags", "author")
         )
         articles = await query
+        
+        # 保持推荐结果的原始顺序（按推荐得分排序）
+        article_dict = {article.id: article for article in articles}
+        articles = [article_dict[aid] for aid in recommended_ids if aid in article_dict]
 
     # 处理文章信息，确保返回格式正确
     serialized_articles: List[ArticleOut] = []

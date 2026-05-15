@@ -11,6 +11,7 @@ from backend.core.redis import rt
 from backend.sc_utils import _parse_image_url
 from backend.sc_utils.parse_url import _parse_list_urls
 from backend.sc_utils.recommend_4 import HybridMultimodalRecommender as HybridMultimodalRecommenderV4
+from backend.sc_utils.recommend_cache import cached_recommender
 from settings import APP_BASE_URL
 import jwt
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -425,10 +426,9 @@ def _refill_recommend_cache_sync(user_id: int, count: int):
             print(f"[DEBUG] Cache already has {current_count} items for user {user_id}, skipping refill")
             return
         
-        recommender = HybridMultimodalRecommenderV4()
-        recommend_results = recommender.recommend(user_id, top_k=count)
+        recommend_results = cached_recommender.recommender.recommend(user_id, top_k=count)
 
-        # 推入Redis List - 只存储article_id和score
+        # 推入 Redis List - 只存储 article_id 和 score
         for rec in recommend_results:
             cache_item = {
                 "article_id": rec["article_id"],
@@ -436,7 +436,7 @@ def _refill_recommend_cache_sync(user_id: int, count: int):
             }
             rt.rpush(cache_key, json.dumps(cache_item))
 
-        # 设置过期时间1小时
+        # 设置过期时间 1 小时
         rt.expire(cache_key, 3600)
         print(f"[DEBUG] Refilled cache for user {user_id}, added {len(recommend_results)} items")
     except Exception as e:
@@ -454,8 +454,7 @@ async def _refill_recommend_cache(user_id: int, count: int = 30):
 
 def _get_recommendations_sync(user_id: int, count: int):
     """同步获取推荐"""
-    recommender = HybridMultimodalRecommenderV4()
-    recommend_results = recommender.recommend(user_id, top_k=count)
+    recommend_results = cached_recommender.recommender.recommend(user_id, top_k=count)
     # 转换为与缓存格式一致的结构
     return [{"article_id": rec["article_id"], "score": rec["score"]} for rec in recommend_results]
 

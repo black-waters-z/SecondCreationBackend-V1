@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-多模态双塔推荐系统 - Scikit-learn优化版
+多模态双塔推荐系统 - Scikit-learn 优化版
 结合：
 1. 基于内容的推荐（Scikit-learn TF-IDF）
 2. 协同过滤（Scikit-learn 相似度计算）
@@ -18,6 +18,17 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.decomposition import NMF
 from sklearn.preprocessing import normalize
+
+# 延迟导入重型依赖（仅在需要 DSSM 时加载）
+try:
+    from sentence_transformers import SentenceTransformer, CrossEncoder
+    import torch
+    SENTENCE_TRANSFORMERS_AVAILABLE = True
+except ImportError:
+    SENTENCE_TRANSFORMERS_AVAILABLE = False
+    SentenceTransformer = None
+    CrossEncoder = None
+    torch = None
 
 # -----------------------------
 # 配置
@@ -391,6 +402,7 @@ class MatrixFactorizationRecommender:
 
 # 全局模型缓存 - 单例模式
 _model_cache = {}
+_model_initialized = False  # 标记模型是否已经初始化过
 
 # -----------------------------
 # 多模态双塔模型（DSSM）
@@ -400,10 +412,10 @@ class DSSMRecommender:
     多模态双塔推荐器（DSSM）- 支持文本和图片的多模态推荐
     
     算法设计思路：
-    1. 为什么用DSSM：深度语义模型能学习到用户和物品的深层语义特征，
-       适合处理多模态数据（文本+图片）
+    1. 为什么用 DSSM：深度语义模型能学习到用户和物品的深层语义特征，
+       适合处理多模态数据（文本 + 图片）
     2. 为什么要分文本和图片处理：不同模态的数据需要不同的特征提取方法，
-       文本用TF-IDF，图片用预训练CNN模型
+       文本用 TF-IDF，图片用预训练 CNN 模型
     3. 为什么要融合多模态特征：融合能更全面地表示物品特征，提高推荐精度
     4. 为什么要预计算嵌入向量：预计算能提高推荐速度，避免实时计算的延迟
     
@@ -414,15 +426,28 @@ class DSSMRecommender:
     """
 
     def __init__(self, articles=None, behaviors=None):
+        global _model_initialized
         self.articles = articles if articles else load_articles()
         self.behaviors = behaviors if behaviors else load_user_behaviors()
         self.user_embeddings = {}
         self.item_embeddings = {}
-        self._init_models()
+        
+        # 如果模型已经初始化过，直接从缓存加载
+        if _model_initialized and _model_cache:
+            self.text_model = _model_cache['text_model']
+            self.image_model = _model_cache['image_model']
+            self.cross_encoder = _model_cache['cross_encoder']
+            self.device = _model_cache['device']
+            print("[DSSM] Using cached models (already initialized)")
+        else:
+            self._init_models()
+            _model_initialized = True
 
     def _init_models(self):
         """初始化预训练模型（单例模式）"""
         global _model_cache
+        
+        print("[DSSM] Initializing models (this should only happen once)...")
         
         # 检查缓存中是否已有模型
         if _model_cache:
@@ -430,17 +455,21 @@ class DSSMRecommender:
             self.image_model = _model_cache['image_model']
             self.cross_encoder = _model_cache['cross_encoder']
             self.device = _model_cache['device']
+            print("[DSSM] Models loaded from cache")
             
             # 如果缓存中没有预计算的物品嵌入，则重新计算
             if not self.item_embeddings:
                 self._precompute_item_embeddings()
             return
         
+        if not SENTENCE_TRANSFORMERS_AVAILABLE:
+            print("警告：sentence-transformers 库未安装，DSSM 功能将受限")
+            self.text_model = None
+            self.image_model = None
+            self.cross_encoder = None
+            return
+        
         try:
-            from sentence_transformers import SentenceTransformer, CrossEncoder
-            from PIL import Image
-            import torch
-
             self.text_model = SentenceTransformer('all-MiniLM-L6-v2')
             self.image_model = SentenceTransformer('clip-ViT-B-32')
             self.cross_encoder = CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
@@ -456,6 +485,7 @@ class DSSMRecommender:
                 'cross_encoder': self.cross_encoder,
                 'device': self.device
             }
+            print("[DSSM] Models initialized and cached successfully")
 
         except ImportError as e:
             print(f"警告: 缺少必要的库，DSSM功能将受限: {e}")
@@ -623,9 +653,12 @@ class HybridMultimodalRecommender:
         self.dssm_rec = None  # DSSM模型延迟初始化
 
     def _init_dssm(self):
-        """延迟初始化DSSM模型"""
+        """延迟初始化 DSSM 模型"""
         if not self.dssm_rec:
+            print("[HybridRec] Initializing DSSM for the first time...")
             self.dssm_rec = DSSMRecommender(self.articles, self.behaviors)
+        else:
+            print("[HybridRec] DSSM already initialized, skipping")
 
     def _get_popular_articles(self, top_k=20):
         """获取热门文章（基于浏览量、点赞数、收藏数排序）"""
@@ -669,7 +702,7 @@ class HybridMultimodalRecommender:
         return detailed_results
 
     def recommend(self, user_id, query=None, query_image_path=None, top_k=20,
-                 alpha=0.3, delta=0.3, beta=0.3, gamma=0.4, cf_method="model_based"):
+                 alpha=0.3, delta=0.1, beta=0.3, gamma=0.3, cf_method="model_based"):
         """混合推荐"""
         # 1. 基于内容的推荐
         if query:

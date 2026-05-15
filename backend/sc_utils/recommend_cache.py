@@ -12,7 +12,7 @@ from typing import List, Dict, Any, Optional
 import redis
 
 from backend.core.redis import rt
-from backend.sc_utils.recommend_3 import HybridMultimodalRecommender
+from backend.sc_utils.recommend_4 import HybridMultimodalRecommender
 
 # Redis 键名前缀
 REDIS_RECOMMEND_PREFIX = "recommend:user:"
@@ -27,9 +27,11 @@ class CachedRecommender:
     """带有 Redis 缓存的推荐器"""
 
     def __init__(self):
+        print("[CachedRecommender] Initializing...")
         self.redis_client = rt
         self.recommender = HybridMultimodalRecommender()
         self.generation_lock = threading.Lock()
+        print("[CachedRecommender] Initialization complete")
 
     def _get_cache_key(self, user_id: int) -> str:
         """获取用户推荐缓存的键名"""

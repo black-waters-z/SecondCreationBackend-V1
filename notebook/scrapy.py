@@ -233,7 +233,7 @@ def parse_note() -> dict | None:
     if not title_text and not content_text and not author_text:
         return None
     # comments = _parse_note_comments()
-    # img_path = download_note_img()
+    img_path = download_note_img()
     img_path = None
     if not title_text and not content_text:
         return None
@@ -290,7 +290,7 @@ while True:
         d.dump_hierarchy(),
         "xml"
     )
-    recycle_node = soup.find("node", attrs={"class": "androidx.recyclerview.widget.RecyclerView","bounds":"[0,429][1268,2457]"})
+    recycle_node = soup.find("node", attrs={"class": "androidx.recyclerview.widget.RecyclerView"})
     if not recycle_node:
         raise Exception("未找到RecyclerView节点")
 

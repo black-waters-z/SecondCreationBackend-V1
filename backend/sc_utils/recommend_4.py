@@ -33,8 +33,8 @@ except ImportError:
 # -----------------------------
 # 配置
 # -----------------------------
-SQLITE_DB_PATH = r"D:\projects\SecondCreationBackend-V1\scforum.db"
-IMAGE_ROOT_DIR = r"D:\projects\SecondCreationBackend-V1\backend\static\upload_IMG"
+SQLITE_DB_PATH = r"D:\Project\SecondCreationBackend-V1\scforum.db"
+IMAGE_ROOT_DIR = r"D:\Project\SecondCreationBackend-V1\backend\static\upload_IMG"
 
 # HuggingFace Token - 用于认证请求，提高下载速度和速率限制
 # 可以通过环境变量 HF_TOKEN 设置，或在此处直接设置
@@ -78,11 +78,11 @@ def load_user_behaviors():
     cursor.execute("SELECT user_id, article_id FROM user_likes")
     rows = cursor.fetchall()
     conn.close()
-    
+
     behaviors = defaultdict(list)
     for user_id, article_id in rows:
         behaviors[int(user_id)].append(int(article_id))
-    
+
     return dict(behaviors)
 
 # -----------------------------
@@ -91,13 +91,13 @@ def load_user_behaviors():
 class ContentBasedRecommender:
     """
     基于内容的推荐器 - 使用Scikit-learn TF-IDF
-    
+
     算法设计思路：
     1. 为什么用TF-IDF：TF-IDF能有效提取文本特征，衡量词语在文档中的重要性
     2. 为什么用余弦相似度：余弦相似度适合衡量高维向量（如文本特征向量）之间的相似性
     3. 为什么要预处理：去除停用词和标点能减少噪声，提高特征质量
     4. 为什么要构建物品画像：物品画像能将非结构化文本转化为结构化特征，便于计算相似度
-    
+
     解决的问题：
     - 冷启动问题：不需要用户行为数据，仅基于物品内容即可推荐
     - 兴趣漂移：能快速捕捉物品的最新内容特征
@@ -164,7 +164,7 @@ class ContentBasedRecommender:
 class CollaborativeFilteringRecommender:
     """
     协同过滤推荐器 - 支持基于用户的协同过滤和基于物品的协同过滤
-    
+
     算法设计思路：
     1. 为什么分用户和物品两种：
        - 基于用户的协同过滤：适合用户数较少的场景，能发现用户的兴趣相似性
@@ -172,7 +172,7 @@ class CollaborativeFilteringRecommender:
     2. 为什么用余弦相似度：余弦相似度能有效衡量用户兴趣或物品特征的相似性
     3. 为什么要构建用户-物品矩阵：矩阵化表示便于进行相似度计算和推荐
     4. 为什么要限制邻居数量：避免噪声用户/物品的影响，提高推荐精度
-    
+
     解决的问题：
     - 发现潜在兴趣：能基于用户行为发现用户自己可能都没意识到的兴趣
     - 多样性推荐：能推荐用户没有接触过但兴趣相似的内容
@@ -236,7 +236,7 @@ class CollaborativeFilteringRecommender:
         # 返回Top-K推荐
         sorted_scores = sorted(scores.items(), key=lambda x: x[1], reverse=True)[:top_k]
         return dict(sorted_scores)
-    
+
     def rerank_with_cross_encoder(self, query, candidates, top_k=10):
         """
         使用Cross-Encoder进行精排
@@ -247,11 +247,11 @@ class CollaborativeFilteringRecommender:
         """
         if not self.cross_encoder or not query or not candidates:
             return candidates
-        
+
         # 准备候选文章的文本内容
         candidate_pairs = []
         article_ids = list(candidates.keys())
-        
+
         for article_id in article_ids:
             article = next((a for a in self.articles if a['article_id'] == article_id), None)
             if article:
@@ -259,10 +259,10 @@ class CollaborativeFilteringRecommender:
                 candidate_pairs.append([query, full_text])
             else:
                 candidate_pairs.append([query, ""])
-        
+
         # 使用Cross-Encoder计算精排得分
         cross_scores = self.cross_encoder.predict(candidate_pairs)
-        
+
         # 归一化得分
         min_score = min(cross_scores)
         max_score = max(cross_scores)
@@ -270,10 +270,10 @@ class CollaborativeFilteringRecommender:
             cross_scores = (cross_scores - min_score) / (max_score - min_score)
         else:
             cross_scores = [0.5] * len(cross_scores)
-        
+
         # 构建精排结果
         reranked = {article_ids[i]: float(cross_scores[i]) for i in range(len(article_ids))}
-        
+
         # 排序并返回Top-K
         sorted_reranked = sorted(reranked.items(), key=lambda x: x[1], reverse=True)[:top_k]
         return dict(sorted_reranked)
@@ -318,7 +318,7 @@ class CollaborativeFilteringRecommender:
 class MatrixFactorizationRecommender:
     """
     矩阵分解推荐器 - 使用Scikit-learn NMF（非负矩阵分解）
-    
+
     算法设计思路：
     1. 为什么用NMF：NMF能将用户-物品矩阵分解为用户隐特征和物品隐特征矩阵，
        适合处理稀疏数据，且分解结果具有可解释性
@@ -326,7 +326,7 @@ class MatrixFactorizationRecommender:
        过少会丢失信息，过多会导致过拟合
     3. 为什么要构建用户-物品矩阵：矩阵化表示便于进行矩阵分解和推荐
     4. 为什么要排除已交互物品：避免推荐用户已经看过的内容，提高推荐新颖性
-    
+
     解决的问题：
     - 数据稀疏性：能有效处理用户-物品矩阵的稀疏问题，挖掘潜在特征
     - 可解释性：隐特征矩阵能反映用户和物品的潜在兴趣/属性
@@ -410,7 +410,7 @@ _model_initialized = False  # 标记模型是否已经初始化过
 class DSSMRecommender:
     """
     多模态双塔推荐器（DSSM）- 支持文本和图片的多模态推荐
-    
+
     算法设计思路：
     1. 为什么用 DSSM：深度语义模型能学习到用户和物品的深层语义特征，
        适合处理多模态数据（文本 + 图片）
@@ -418,7 +418,7 @@ class DSSMRecommender:
        文本用 TF-IDF，图片用预训练 CNN 模型
     3. 为什么要融合多模态特征：融合能更全面地表示物品特征，提高推荐精度
     4. 为什么要预计算嵌入向量：预计算能提高推荐速度，避免实时计算的延迟
-    
+
     解决的问题：
     - 多模态数据处理：能同时处理文本和图片数据，适合富媒体内容推荐
     - 语义理解：能理解内容的深层语义，而不仅仅是表面特征
@@ -431,7 +431,7 @@ class DSSMRecommender:
         self.behaviors = behaviors if behaviors else load_user_behaviors()
         self.user_embeddings = {}
         self.item_embeddings = {}
-        
+
         # 如果模型已经初始化过，直接从缓存加载
         if _model_initialized and _model_cache:
             self.text_model = _model_cache['text_model']
@@ -446,9 +446,9 @@ class DSSMRecommender:
     def _init_models(self):
         """初始化预训练模型（单例模式）"""
         global _model_cache
-        
+
         print("[DSSM] Initializing models (this should only happen once)...")
-        
+
         # 检查缓存中是否已有模型
         if _model_cache:
             self.text_model = _model_cache['text_model']
@@ -456,19 +456,19 @@ class DSSMRecommender:
             self.cross_encoder = _model_cache['cross_encoder']
             self.device = _model_cache['device']
             print("[DSSM] Models loaded from cache")
-            
+
             # 如果缓存中没有预计算的物品嵌入，则重新计算
             if not self.item_embeddings:
                 self._precompute_item_embeddings()
             return
-        
+
         if not SENTENCE_TRANSFORMERS_AVAILABLE:
             print("警告：sentence-transformers 库未安装，DSSM 功能将受限")
             self.text_model = None
             self.image_model = None
             self.cross_encoder = None
             return
-        
+
         try:
             self.text_model = SentenceTransformer('all-MiniLM-L6-v2')
             self.image_model = SentenceTransformer('clip-ViT-B-32')
@@ -477,7 +477,7 @@ class DSSMRecommender:
 
             # 预计算物品嵌入
             self._precompute_item_embeddings()
-            
+
             # 将模型存入全局缓存
             _model_cache = {
                 'text_model': self.text_model,
@@ -500,7 +500,7 @@ class DSSMRecommender:
 
         for article in self.articles:
             article_id = article['article_id']
-            
+
             # 文本特征
             text_parts = [
                 article['title'] or '',
@@ -521,11 +521,13 @@ class DSSMRecommender:
                 except Exception as e:
                     print(f"警告: 无法加载图片 {article['image_urls'][0]}: {e}")
 
-            # 融合特征
+            # 融合特征 - 统一维度为 384(text) + 512(image) = 896
             if image_embedding is not None:
                 combined_embedding = np.concatenate([text_embedding, image_embedding])
             else:
-                combined_embedding = text_embedding
+                # 没有图片时，图片部分补零
+                zero_padding = np.zeros(512, dtype=text_embedding.dtype)
+                combined_embedding = np.concatenate([text_embedding, zero_padding])
 
             # 归一化
             combined_embedding = combined_embedding / np.linalg.norm(combined_embedding)
@@ -597,15 +599,13 @@ class DSSMRecommender:
             except Exception as e:
                 print(f"警告: 无法加载查询图片: {e}")
 
-        # 融合查询特征
-        if text_embedding is not None and image_embedding is not None:
-            query_embedding = np.concatenate([text_embedding, image_embedding])
-        elif text_embedding is not None:
-            query_embedding = text_embedding
-        elif image_embedding is not None:
-            query_embedding = image_embedding
-        else:
-            return {}
+        # 融合查询特征 - 统一维度为 384(text) + 512(image) = 896
+        if text_embedding is None:
+            text_embedding = np.zeros(384, dtype=np.float32)
+        if image_embedding is None:
+            image_embedding = np.zeros(512, dtype=np.float32)
+
+        query_embedding = np.concatenate([text_embedding, image_embedding])
 
         # 归一化
         query_embedding = query_embedding / np.linalg.norm(query_embedding)
@@ -626,7 +626,7 @@ class DSSMRecommender:
 class HybridMultimodalRecommender:
     """
     多模态混合推荐器 - 整合多种推荐算法的优势
-    
+
     算法设计思路：
     1. 为什么要混合多种算法：不同算法有不同的优势和适用场景，
        混合能弥补单一算法的缺陷，提高推荐精度
@@ -635,7 +635,7 @@ class HybridMultimodalRecommender:
     3. 为什么要动态加权：根据是否有查询词动态调整各算法的权重，
        有查询时更侧重内容推荐，无查询时更侧重协同过滤
     4. 为什么要延迟初始化DSSM：DSSM模型初始化耗时较长，延迟初始化能提高系统启动速度
-    
+
     解决的问题：
     - 单一算法缺陷：弥补单一算法的不足，提高推荐的准确性和多样性
     - 冷启动问题：结合内容推荐和协同过滤，能更好地处理新用户和新物品
@@ -645,7 +645,7 @@ class HybridMultimodalRecommender:
     def __init__(self):
         self.articles = load_articles()
         self.behaviors = load_user_behaviors()
-        
+
         # 初始化各个推荐器
         self.content_rec = ContentBasedRecommender(self.articles)
         self.cf_rec = CollaborativeFilteringRecommender(self.behaviors)
@@ -663,20 +663,20 @@ class HybridMultimodalRecommender:
     def _get_popular_articles(self, top_k=20):
         """获取热门文章（基于浏览量、点赞数、收藏数排序）"""
         print(f"[DEBUG] Getting popular articles, top_k={top_k}")
-        
+
         # 从数据库获取文章统计信息
         conn = sqlite3.connect(SQLITE_DB_PATH)
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT id, title, subtitle, content, image_urls, view_count, like_count, favorite_count 
-            FROM articles 
+            SELECT id, title, subtitle, content, image_urls, view_count, like_count, favorite_count
+            FROM articles
             WHERE status='published'
             ORDER BY (view_count + like_count * 2 + favorite_count * 3) DESC
             LIMIT ?
         """, (top_k,))
         rows = cursor.fetchall()
         conn.close()
-        
+
         detailed_results = []
         for r in rows:
             article_id = int(r[0])
@@ -697,7 +697,7 @@ class HybridMultimodalRecommender:
                 "content": (r[3] or "")[:100] + "..." if r[3] else "N/A",
                 "image_urls": image_urls
             })
-        
+
         print(f"[DEBUG] Returning {len(detailed_results)} popular articles")
         return detailed_results
 
@@ -800,7 +800,7 @@ class HybridMultimodalRecommender:
 
         # 排序
         final_results = sorted(combined_scores.items(), key=lambda x: x[1], reverse=True)[:top_k]  # 取top_k条
-        
+
         # 使用Cross-Encoder进行精排（仅当有查询时）
         if query and self.dssm_rec and hasattr(self.dssm_rec, 'rerank_with_cross_encoder'):
             # 转换为字典格式
